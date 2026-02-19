@@ -1,0 +1,433 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User/Player
+model User {
+  id                String   @id @default(uuid())
+  address           String   @unique
+  username          String?  @unique
+  email             String?  @unique
+  nonce             String   @default(uuid())
+  lastLogin         DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  cars              Car[]
+  spareParts        SparePart[]
+  rooms             RoomPlayer[]
+  races             Race[]
+  bets              Bet[]
+  questProgress     QuestProgress[]
+  claims            PhysicalClaim[]
+  marketListings    MarketListing[]
+  gachaHistory      GachaHistory[]
+
+  @@index([address])
+  @@map("users")
+}
+
+// NFT Metadata - Cars
+model Car {
+  id                String   @id @default(uuid())
+  uid               String   @unique
+  owner             String
+  name              String
+  brand             Int      // 0=Lamborghini, 1=Ferrari, 2=Ford, 3=Chevrolet
+  rarity            Int      // 0=Common, 1=Rare, 2=Epic, 3=Legendary
+  slotLimit         Int      // 2-4 sparepart slots
+
+  // Base Stats
+  baseSpeed         Int
+  baseAcceleration  Int
+  baseHandling      Int
+  baseDrift         Int
+
+  // Metadata
+  imageUrl          String?
+  metadataUri       String?
+
+  // Status
+  isListed          Boolean  @default(false)
+  isEquipped        Boolean  @default(false)
+  isClaimed         Boolean  @default(false)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  user              User     @relation(fields: [owner], references: [address])
+  equippedParts     EquippedPart[]
+  listing           MarketListing?
+  claim             PhysicalClaim?
+
+  @@index([owner])
+  @@index([uid])
+  @@index([brand])
+  @@index([rarity])
+  @@map("cars")
+}
+
+// NFT Metadata - SpareParts
+model SparePart {
+  id                String   @id @default(uuid())
+  uid               String   @unique
+  owner             String
+  name              String
+  partType          Int      // 0=Wheels, 1=Engine, 2=Body, 3=Shocks
+  rarity            Int      // 0-3
+  compatibleBrand   Int      // 0-3
+
+  // Bonus Stats
+  bonusSpeed        Int
+  bonusAcceleration Int
+  bonusHandling     Int
+  bonusDrift        Int
+
+  // Metadata
+  imageUrl          String?
+  metadataUri       String?
+
+  // Status
+  isListed          Boolean  @default(false)
+  isEquipped        Boolean  @default(false)
+  isClaimed         Boolean  @default(false)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  user              User     @relation(fields: [owner], references: [address])
+  equippedOn        EquippedPart?
+  listing           MarketListing?
+  claimedIn         ClaimedPart[]
+
+  @@index([owner])
+  @@index([uid])
+  @@index([partType])
+  @@index([rarity])
+  @@index([compatibleBrand])
+  @@map("spare_parts")
+}
+
+// Equipment System
+model EquippedPart {
+  id                String    @id @default(uuid())
+  carUid            String
+  partUid           String    @unique
+
+  car               Car       @relation(fields: [carUid], references: [uid])
+  part              SparePart @relation(fields: [partUid], references: [uid])
+
+  equippedAt        DateTime  @default(now())
+
+  @@index([carUid])
+  @@map("equipped_parts")
+}
+
+// Room Management
+model Room {
+  id                String   @id @default(uuid())
+  roomUid           String   @unique
+  roomHash          String   @unique
+  entryFee          String   // BigInt as string
+  maxPlayers        Int
+  deadline          String   // BigInt timestamp as string
+  status            String   @default("WAITING") // WAITING, READY, STARTED, FINISHED
+  gameMode          String   // DRAG_RACE, ENDLESS_RACE, ROYAL_RUMBLE
+
+  // On-chain status
+  isOnChain         Boolean  @default(false)
+  txDigest          String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  startedAt         DateTime?
+  finishedAt        DateTime?
+
+  // Relations
+  players           RoomPlayer[]
+  race              Race?
+  predictionPool    PredictionPool?
+
+  @@index([roomUid])
+  @@index([status])
+  @@index([gameMode])
+  @@map("rooms")
+}
+
+// Room Players (Many-to-Many)
+model RoomPlayer {
+  id                String   @id @default(uuid())
+  roomId            String
+  playerAddress     String
+  carUid            String
+  isApproved        Boolean  @default(false)
+  approvedAt        DateTime?
+
+  room              Room     @relation(fields: [roomId], references: [id])
+  user              User     @relation(fields: [playerAddress], references: [address])
+
+  joinedAt          DateTime @default(now())
+
+  @@unique([roomId, playerAddress])
+  @@index([roomId])
+  @@index([playerAddress])
+  @@map("room_players")
+}
+
+// Race Results
+model Race {
+  id                String   @id @default(uuid())
+  roomId            String   @unique
+  roomUid           String   @unique
+  winner            String
+  finishTime        String   // BigInt as string
+  prizePool         String   // BigInt as string
+
+  // Race data
+  raceData          String?    // Store detailed race results, positions, etc.
+
+  // On-chain status
+  isFinalized       Boolean  @default(false)
+  txDigest          String?
+
+  createdAt         DateTime @default(now())
+  finalizedAt       DateTime?
+
+  // Relations
+  room              Room     @relation(fields: [roomId], references: [id])
+  winnerUser        User     @relation(fields: [winner], references: [address])
+
+  @@index([roomUid])
+  @@index([winner])
+  @@map("races")
+}
+
+// Marketplace Listings
+model MarketListing {
+  id                String   @id @default(uuid())
+  listingId         String   @unique
+  seller            String
+  nftType           String   // CAR, SPAREPART
+  nftUid            String   @unique
+  price             String   // BigInt as string
+  expiry            String   // BigInt as string
+  isActive          Boolean  @default(true)
+  isSold            Boolean  @default(false)
+
+  // Relations
+  carId             String?  @unique
+  sparePartId       String?  @unique
+  car               Car?     @relation(fields: [carId], references: [id])
+  sparePart         SparePart? @relation(fields: [sparePartId], references: [id])
+  sellerUser        User     @relation(fields: [seller], references: [address])
+
+  // On-chain status
+  txDigest          String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  soldAt            DateTime?
+
+  @@index([seller])
+  @@index([nftType])
+  @@index([isActive])
+  @@index([isSold])
+  @@map("market_listings")
+}
+
+// Prediction Market
+model PredictionPool {
+  id                String   @id @default(uuid())
+  roomId            String   @unique
+  roomUid           String   @unique
+  totalPool         String   @default("0") // BigInt as string
+  isSettled         Boolean  @default(false)
+  actualWinner      String?
+  settledAt         DateTime?
+
+  // On-chain status
+  txDigest          String?
+
+  createdAt         DateTime @default(now())
+
+  // Relations
+  room              Room     @relation(fields: [roomId], references: [id])
+  bets              Bet[]
+
+  @@index([roomUid])
+  @@index([isSettled])
+  @@map("prediction_pools")
+}
+
+// Bets on Prediction Pools
+model Bet {
+  id                String   @id @default(uuid())
+  poolId            String
+  bettor            String
+  predictedWinner   String
+  amount            String   // BigInt as string
+  hasClaimed        Boolean  @default(false)
+  payout            String   @default("0") // BigInt as string
+
+  createdAt         DateTime @default(now())
+  claimedAt         DateTime?
+
+  // Relations
+  pool              PredictionPool @relation(fields: [poolId], references: [id])
+  user              User     @relation(fields: [bettor], references: [address])
+
+  @@unique([poolId, bettor])
+  @@index([poolId])
+  @@index([bettor])
+  @@map("bets")
+}
+
+// Gacha History
+model GachaHistory {
+  id                String   @id @default(uuid())
+  player            String
+  tierId            Int
+  tierPrice         String   // BigInt as string
+  result            String   // CAR, SPAREPART
+  resultUid         String?
+  rarity            Int
+
+  // Commit-Reveal data
+  commitHash        String?
+  revealNonce       String?  // BigInt as string
+
+  createdAt         DateTime @default(now())
+  revealedAt        DateTime?
+
+  // Relations
+  user              User     @relation(fields: [player], references: [address])
+
+  @@index([player])
+  @@index([tierId])
+  @@map("gacha_history")
+}
+
+// Quest System
+model Quest {
+  id                String   @id @default(uuid())
+  name              String
+  description       String
+  type              String   // DAILY, WEEKLY, SPECIAL
+  requirement       String     // { type: "RACE_WIN", count: 3 }
+  reward            String     // { type: "TOKEN", amount: 1000 }
+  isActive          Boolean  @default(true)
+
+  startDate         DateTime
+  endDate           DateTime?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  progress          QuestProgress[]
+
+  @@index([type])
+  @@index([isActive])
+  @@map("quests")
+}
+
+model QuestProgress {
+  id                String   @id @default(uuid())
+  questId           String
+  playerAddress     String
+  progress          Int      @default(0)
+  isCompleted       Boolean  @default(false)
+  isClaimed         Boolean  @default(false)
+
+  completedAt       DateTime?
+  claimedAt         DateTime?
+
+  // Relations
+  quest             Quest    @relation(fields: [questId], references: [id])
+  user              User     @relation(fields: [playerAddress], references: [address])
+
+  @@unique([questId, playerAddress])
+  @@index([questId])
+  @@index([playerAddress])
+  @@map("quest_progress")
+}
+
+// RWA Physical Claims
+model PhysicalClaim {
+  id                String   @id @default(uuid())
+  claimant          String
+  carUid            String   @unique
+  carId             String   @unique
+
+  // Shipping info
+  shippingAddress   String
+  trackingNumber    String?
+  status            String   @default("PENDING") // PENDING, PROCESSING, SHIPPED, DELIVERED
+
+  claimedAt         DateTime @default(now())
+  shippedAt         DateTime?
+  deliveredAt       DateTime?
+
+  // On-chain status
+  txDigest          String?
+
+  // Relations
+  user              User     @relation(fields: [claimant], references: [address])
+  car               Car      @relation(fields: [carId], references: [id])
+  parts             ClaimedPart[]
+
+  @@index([claimant])
+  @@index([status])
+  @@index([carUid])
+  @@map("physical_claims")
+}
+
+model ClaimedPart {
+  id                String   @id @default(uuid())
+  claimId           String
+  partUid           String
+  partId            String
+
+  // Relations
+  claim             PhysicalClaim @relation(fields: [claimId], references: [id])
+  part              SparePart @relation(fields: [partId], references: [id])
+
+  @@index([claimId])
+  @@map("claimed_parts")
+}
+
+// Used Nonces (Anti-Replay Protection)
+model UsedNonce {
+  id                String   @id @default(uuid())
+  nonce             String   @unique
+  usedBy            String   // Transaction type or function
+  usedAt            DateTime @default(now())
+
+  @@index([nonce])
+  @@map("used_nonces")
+}
+
+// System Events Log
+model EventLog {
+  id                String   @id @default(uuid())
+  eventType         String
+  txDigest          String   @unique
+  sender            String?
+  timestamp         String   // BigInt as string
+  eventData         String
+
+  indexedAt         DateTime @default(now())
+
+  @@index([eventType])
+  @@index([txDigest])
+  @@index([sender])
+  @@map("event_logs")
+}
