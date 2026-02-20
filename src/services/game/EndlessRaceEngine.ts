@@ -115,46 +115,18 @@ export class EndlessRaceEngine {
    * Process player input
    */
   public processInput(state: EndlessRaceState, input: PlayerInput): void {
-    logger.info(`🔧 processInput called - action: "${input.action}", playerId: ${input.playerId}`);
-
     const player = state.players.find((p) => p.playerId === input.playerId);
-    if (!player) {
-      logger.warn(`⚠️  Player ${input.playerId} not found in state`);
-      return;
-    }
-    if (player.isFinished) {
-      logger.info(`ℹ️  Player ${input.playerId} is finished, ignoring input`);
-      return;
-    }
+    if (!player || player.isFinished) return;
 
-    // Lane-based movement for Endless Race
-    const currentLane = player.lane ?? 1; // Default to middle lane (use ?? to allow lane 0)
-    const LANE_WIDTH = 5; // From TRACK_CONFIG
+    const currentLane = player.lane ?? 1;
+    const LANE_WIDTH = 5;
 
-    logger.info(`🚗 Current lane: ${currentLane}, Action: "${input.action}"`);
-
-    if (input.action === 'TURN_LEFT') {
-      logger.info(`⬅️  Processing TURN_LEFT...`);
-      // Move to left lane
-      if (currentLane > 0) {
-        player.lane = currentLane - 1;
-        player.position.x = (player.lane - 1) * LANE_WIDTH; // -1 for center offset
-        logger.info(`✅ Player ${input.playerId} moved to lane ${player.lane} (x: ${player.position.x})`);
-      } else {
-        logger.info(`🚫 Already at leftmost lane`);
-      }
-    } else if (input.action === 'TURN_RIGHT') {
-      logger.info(`➡️  Processing TURN_RIGHT...`);
-      // Move to right lane
-      if (currentLane < 2) { // 3 lanes: 0, 1, 2
-        player.lane = currentLane + 1;
-        player.position.x = (player.lane - 1) * LANE_WIDTH; // -1 for center offset
-        logger.info(`✅ Player ${input.playerId} moved to lane ${player.lane} (x: ${player.position.x})`);
-      } else {
-        logger.info(`🚫 Already at rightmost lane`);
-      }
-    } else {
-      logger.warn(`❓ Unknown action: "${input.action}"`);
+    if (input.action === 'TURN_LEFT' && currentLane > 0) {
+      player.lane = currentLane - 1;
+      player.position.x = (player.lane - 1) * LANE_WIDTH;
+    } else if (input.action === 'TURN_RIGHT' && currentLane < 2) {
+      player.lane = currentLane + 1;
+      player.position.x = (player.lane - 1) * LANE_WIDTH;
     }
   }
 

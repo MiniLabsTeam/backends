@@ -113,7 +113,7 @@ router.get(
     const { roomUid } = req.params;
 
     const room = await prismaClient.room.findUnique({
-      where: { uid: roomUid },
+      where: { roomUid: roomUid },
       include: {
         players: {
           include: {
@@ -317,6 +317,43 @@ router.post(
     res.json({
       success: true,
       message: 'Game stopped',
+    });
+  })
+);
+
+/**
+ * POST /api/game/room/create-vs-ai
+ * Create a room with AI opponent + auto-join player
+ */
+router.post(
+  '/room/create-vs-ai',
+  authenticate,
+  validate(
+    Joi.object({
+      carUid: Joi.string().required(),
+    })
+  ),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw new AppError('Authentication required', 401);
+
+    const { carUid } = req.body;
+    const deadline = new Date(Date.now() + 3600000).toISOString();
+
+    // Create room with AI flag
+    const room = await gameEngineService.createRoomWithAI(
+      req.user.address,
+      carUid,
+      '0',
+      deadline
+    );
+
+    // Auto-join player (use joinRoomForAI to bypass maxPlayers restriction if needed)
+    await gameEngineService.joinRoomForAI(room.roomUid, req.user.address, carUid);
+
+    res.status(201).json({
+      success: true,
+      data: room,
+      message: 'VS AI room created',
     });
   })
 );

@@ -2,7 +2,10 @@ import rateLimit from 'express-rate-limit';
 import { env } from '../config/env';
 import { cache } from '../config/redis';
 
-// Custom store using Redis
+// In-memory fallback store when Redis is unavailable
+const memoryStore = new Map<string, { hits: number; resetAt: number }>();
+
+// Custom store using Redis, falls back to in-memory when Redis is down
 class RedisStore {
   prefix: string;
 
@@ -14,32 +17,52 @@ class RedisStore {
     const redisKey = `${this.prefix}${key}`;
     const windowMs = env.rateLimitWindowMs;
 
-    // Increment counter
-    const hits = await cache.incr(redisKey);
+    try {
+      // Increment counter
+      const hits = await cache.incr(redisKey);
 
-    // Set expiry on first hit
-    if (hits === 1) {
-      await cache.expire(redisKey, Math.ceil(windowMs / 1000));
+      // Set expiry on first hit
+      if (hits === 1) {
+        await cache.expire(redisKey, Math.ceil(windowMs / 1000));
+      }
+
+      // Get TTL
+      const ttl = await cache.ttl(redisKey);
+      const resetTime = ttl > 0 ? new Date(Date.now() + ttl * 1000) : undefined;
+
+      return { totalHits: hits, resetTime };
+    } catch {
+      // Redis unavailable — fall back to in-memory
+      const now = Date.now();
+      const entry = memoryStore.get(redisKey);
+
+      if (!entry || now > entry.resetAt) {
+        memoryStore.set(redisKey, { hits: 1, resetAt: now + windowMs });
+        return { totalHits: 1, resetTime: new Date(now + windowMs) };
+      }
+
+      entry.hits += 1;
+      return { totalHits: entry.hits, resetTime: new Date(entry.resetAt) };
     }
-
-    // Get TTL
-    const ttl = await cache.ttl(redisKey);
-    const resetTime = ttl > 0 ? new Date(Date.now() + ttl * 1000) : undefined;
-
-    return {
-      totalHits: hits,
-      resetTime,
-    };
   }
 
   async decrement(key: string): Promise<void> {
     const redisKey = `${this.prefix}${key}`;
-    await cache.decr(redisKey);
+    try {
+      await cache.decr(redisKey);
+    } catch {
+      const entry = memoryStore.get(redisKey);
+      if (entry) entry.hits = Math.max(0, entry.hits - 1);
+    }
   }
 
   async resetKey(key: string): Promise<void> {
     const redisKey = `${this.prefix}${key}`;
-    await cache.del(redisKey);
+    try {
+      await cache.del(redisKey);
+    } catch {
+      memoryStore.delete(redisKey);
+    }
   }
 }
 

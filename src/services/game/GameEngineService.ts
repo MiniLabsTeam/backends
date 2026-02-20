@@ -20,8 +20,8 @@ import {
 } from '../../types/game';
 import { EndlessRaceEngine } from './EndlessRaceEngine';
 
-const TICK_RATE = 60; // 60 FPS
-const TICK_INTERVAL = 1000 / TICK_RATE; // ~16.67ms
+const TICK_RATE = 20; // 20 FPS — stable for lane-based game
+const TICK_INTERVAL = 1000 / TICK_RATE; // 50ms
 
 interface ActiveGame {
   roomId: string;
@@ -29,6 +29,8 @@ interface ActiveGame {
   interval: NodeJS.Timeout;
   engine: EndlessRaceEngine;
   lastTickTime: number;
+  state: EndlessRaceState | null; // In-memory state (primary, no Redis dependency)
+  inputQueue: PlayerInput[];       // In-memory input queue
 }
 
 export class GameEngineService {
@@ -81,6 +83,39 @@ export class GameEngineService {
   }
 
   /**
+   * Create a room with an AI opponent
+   */
+  public async createRoomWithAI(
+    creatorAddress: string,
+    _carUid: string,
+    entryFee: string,
+    deadline: string
+  ): Promise<any> {
+    // Use distinct gameMode to mark AI room — no Redis dependency
+    const room = await this.createRoom('ENDLESS_RACE_VS_AI', creatorAddress, 2, entryFee, deadline);
+    return room;
+  }
+
+  /**
+   * Join a room as AI bot (bypasses maxPlayers check)
+   */
+  public async joinRoomForAI(roomUid: string, playerAddress: string, carUid: string): Promise<any> {
+    const room = await prismaClient.room.findUnique({
+      where: { roomUid },
+      include: { players: true },
+    });
+    if (!room) throw new Error('Room not found');
+    if (room.status !== 'WAITING') throw new Error('Room is not accepting players');
+
+    const car = await this.getPlayerCarStats(carUid);
+    const roomPlayer = await prismaClient.roomPlayer.create({
+      data: { roomId: room.id, playerAddress, carUid },
+    });
+    await broadcastService.broadcastPlayerJoined(roomUid, playerAddress);
+    return { roomPlayer, carStats: car };
+  }
+
+  /**
    * Join a game room
    */
   public async joinRoom(
@@ -110,14 +145,19 @@ export class GameEngineService {
       // Get car stats
       const car = await this.getPlayerCarStats(carUid);
 
-      // Add player to room
-      const roomPlayer = await prismaClient.roomPlayer.create({
-        data: {
-          roomId: room.id,
-          playerAddress,
-          carUid,
-        },
+      // Add player to room (skip if already joined, e.g. via VS AI HTTP pre-join)
+      let roomPlayer = await prismaClient.roomPlayer.findUnique({
+        where: { roomId_playerAddress: { roomId: room.id, playerAddress } },
       });
+      if (!roomPlayer) {
+        roomPlayer = await prismaClient.roomPlayer.create({
+          data: {
+            roomId: room.id,
+            playerAddress,
+            carUid,
+          },
+        });
+      }
 
       // Broadcast player joined event
       await broadcastService.broadcastPlayerJoined(roomUid, playerAddress);
@@ -163,6 +203,12 @@ export class GameEngineService {
 
     // Broadcast lobby update to all players
     await broadcastService.broadcastLobbyUpdate(roomUid);
+
+    // If AI room (gameMode ends with _VS_AI), start immediately when player is ready
+    if (room.gameMode.endsWith('_VS_AI')) {
+      await this.startCountdown(roomUid);
+      return;
+    }
 
     // Check if all players are approved
     const updatedRoom = await prismaClient.room.findUnique({
@@ -238,9 +284,25 @@ export class GameEngineService {
         })
       );
 
+      // If AI room, inject bot player
+      if (room.gameMode.endsWith('_VS_AI')) {
+        playerStates.push({
+          playerId: 'BOT_AI_1',
+          carUid: 'bot_car',
+          position: { x: 0, y: 0, z: 0 },
+          velocity: { x: 0, y: 0, z: 0 },
+          rotation: 0,
+          speed: 0,
+          stats: { speed: 55, acceleration: 55, handling: 55, drift: 50 },
+          checkpoints: 0,
+          isFinished: false,
+        });
+        await cache.set(`game:room:${roomUid}:bot_tick`, 0, 7200);
+      }
+
       // Create game engine based on mode
       let engine: EndlessRaceEngine;
-      if (room.gameMode === 'ENDLESS_RACE') {
+      if (room.gameMode === 'ENDLESS_RACE' || room.gameMode === 'ENDLESS_RACE_VS_AI') {
         engine = new EndlessRaceEngine();
       } else {
         throw new Error(`Unsupported game mode: ${room.gameMode}`);
@@ -255,18 +317,26 @@ export class GameEngineService {
       // Broadcast game start event to all players
       await broadcastService.broadcastGameStart(roomUid);
 
-      // Start game loop
-      const gameLoop = setInterval(async () => {
-        await this.gameTick(roomUid, engine);
-      }, TICK_INTERVAL);
-
-      this.activeGames.set(roomUid, {
+      const activeGame: ActiveGame = {
         roomId: roomUid,
         gameMode: room.gameMode,
-        interval: gameLoop,
+        interval: null as any,
         engine,
         lastTickTime: Date.now(),
-      });
+        state: initialState,
+        inputQueue: [],
+      };
+      this.activeGames.set(roomUid, activeGame);
+
+      // Use recursive setTimeout to prevent concurrent ticks
+      const scheduleNextTick = () => {
+        activeGame.interval = setTimeout(async () => {
+          if (!this.activeGames.has(roomUid)) return; // Game ended
+          await this.gameTick(roomUid, engine);
+          scheduleNextTick();
+        }, TICK_INTERVAL);
+      };
+      scheduleNextTick();
 
       logger.info(`Game started: ${roomUid} (${room.gameMode})`);
     } catch (error) {
@@ -283,8 +353,8 @@ export class GameEngineService {
       const activeGame = this.activeGames.get(roomId);
       if (!activeGame) return;
 
-      // Get current state from Redis
-      const state = await cache.get<EndlessRaceState>(`game:room:${roomId}:state`);
+      // Get current state from memory (primary) — Redis is a secondary sync only
+      const state = activeGame.state ?? await cache.get<EndlessRaceState>(`game:room:${roomId}:state`);
       if (!state) {
         logger.error(`Game state not found for room ${roomId}`);
         return;
@@ -295,52 +365,32 @@ export class GameEngineService {
       const deltaTime = currentTime - activeGame.lastTickTime;
       activeGame.lastTickTime = currentTime;
 
-      // Process pending inputs
-      const inputsJson = await cache.lrange(`game:room:${roomId}:inputs`, 0, -1);
-      logger.info(`📥 Retrieved ${inputsJson.length} inputs from Redis`);
-
-      for (let inputJson of inputsJson) {
-        let inputStr = String(inputJson);
-        logger.info(`📦 Raw input: ${inputStr}`);
-
-        try {
-          // Check if string is double-encoded (starts and ends with quotes)
-          if (inputStr.startsWith('"') && inputStr.endsWith('"')) {
-            logger.info(`🔧 Detected double-encoding, unescaping...`);
-            // Remove outer quotes
-            inputStr = inputStr.slice(1, -1);
-            // Unescape inner quotes
-            inputStr = inputStr.replace(/\\"/g, '"');
-            // Unescape backslashes
-            inputStr = inputStr.replace(/\\\\/g, '\\');
-            logger.info(`📦 After unescape: ${inputStr}`);
-          }
-
-          // Manual string parsing with regex
-          const playerIdMatch = inputStr.match(/"playerId":"([^"]+)"/);
-          const actionMatch = inputStr.match(/"action":"([^"]+)"/);
-          const timestampMatch = inputStr.match(/"timestamp":(\d+)/);
-
-          if (!playerIdMatch || !actionMatch || !timestampMatch) {
-            logger.error(`❌ Failed to extract fields from: ${inputStr}`);
-            continue;
-          }
-
-          const input: PlayerInput = {
-            playerId: playerIdMatch[1],
-            action: actionMatch[1] as any,
-            timestamp: parseInt(timestampMatch[1]),
-          };
-
-          logger.info(`✅ Manual parse SUCCESS: playerId=${input.playerId}, action=${input.action}`);
-          engine.processInput(state, input);
-        } catch (error) {
-          logger.error(`❌ Failed to process input: ${error}`, { inputStr });
-        }
+      // Process pending inputs from in-memory queue
+      const pendingInputs = activeGame.inputQueue.splice(0);
+      for (const input of pendingInputs) {
+        engine.processInput(state, input);
       }
-      // Clear processed inputs
-      if (inputsJson.length > 0) {
-        await cache.del(`game:room:${roomId}:inputs`);
+
+      // Generate AI bot inputs (detect by BOT_AI_1 presence in state)
+      const hasAI = state.players.some((p: any) => p.playerId === 'BOT_AI_1');
+      if (hasAI) {
+        const botTick = ((await cache.get<number>(`game:room:${roomId}:bot_tick`)) ?? 0) + 1;
+        await cache.set(`game:room:${roomId}:bot_tick`, botTick, 7200);
+        // Every ~120 ticks (2s), make bot decision
+        if (botTick % 120 === 0) {
+          const botPlayer = state.players.find((p: any) => p.playerId === 'BOT_AI_1');
+          if (botPlayer && !botPlayer.isFinished) {
+            const actions = ['TURN_LEFT', 'TURN_RIGHT', 'TURN_LEFT', 'TURN_RIGHT', null, null, null];
+            const chosen = actions[Math.floor(Math.random() * actions.length)];
+            if (chosen) {
+              engine.processInput(state, {
+                playerId: 'BOT_AI_1',
+                action: chosen as any,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
       }
 
       // Update game state
@@ -352,8 +402,9 @@ export class GameEngineService {
         return;
       }
 
-      // Save updated state to Redis
-      await cache.set(`game:room:${roomId}:state`, updatedState, 3600);
+      // Save updated state to memory (always) and Redis (best-effort)
+      activeGame.state = updatedState;
+      cache.set(`game:room:${roomId}:state`, updatedState, 3600).catch(() => {});
 
       // Broadcast game state to all players (60 FPS)
       await broadcastService.broadcastGameState(roomId, updatedState);
@@ -376,17 +427,19 @@ export class GameEngineService {
       timestamp: Date.now(),
     };
 
-    const inputJson = JSON.stringify(input);
-    logger.info(`📝 Saving input to Redis: ${inputJson}`);
-
-    // Add input to queue
-    await cache.rpush(`game:room:${roomId}:inputs`, inputJson);
+    // Push to in-memory queue (primary — no Redis dependency)
+    const activeGame = this.activeGames.get(roomId);
+    if (activeGame) {
+      activeGame.inputQueue.push(input);
+    }
   }
 
   /**
    * Get current game state
    */
   public async getGameState(roomId: string): Promise<GameState | null> {
+    const activeGame = this.activeGames.get(roomId);
+    if (activeGame?.state) return activeGame.state as any;
     return await cache.get<GameState>(`game:room:${roomId}:state`);
   }
 
@@ -404,7 +457,7 @@ export class GameEngineService {
       // Stop game loop
       const activeGame = this.activeGames.get(roomId);
       if (activeGame) {
-        clearInterval(activeGame.interval);
+        clearTimeout(activeGame.interval);
         this.activeGames.delete(roomId);
       }
 
@@ -553,7 +606,7 @@ export class GameEngineService {
   public async stopGame(roomId: string): Promise<void> {
     const activeGame = this.activeGames.get(roomId);
     if (activeGame) {
-      clearInterval(activeGame.interval);
+      clearTimeout(activeGame.interval);
       this.activeGames.delete(roomId);
 
       await prismaClient.room.update({

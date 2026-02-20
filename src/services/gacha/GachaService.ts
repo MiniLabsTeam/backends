@@ -1,8 +1,37 @@
 import crypto from 'crypto';
 import { prismaClient } from '../../config/database';
 import { cache } from '../../config/redis';
-import { Rarity } from '../../config/blockchain';
+import { Rarity, Brand } from '../../config/blockchain';
 import { signingService } from '../signing/SigningService';
+
+// Car images mapped by brand (served from frontend /public)
+const CAR_IMAGES: Record<number, string[]> = {
+  [Brand.LAMBORGHINI]: [
+    '/assets/car_no_background/05-Lamborghini-Huracan-removebg-preview.png',
+    '/assets/car_no_background/02-Bugatti-Chiron-removebg-preview.png',
+    '/assets/car_no_background/03-Koenigsegg_Jesko-removebg-preview.png',
+  ],
+  [Brand.FERRARI]: [
+    '/assets/car_no_background/07-Ferrari-F8-Turbo-removebg-preview.png',
+    '/assets/car_no_background/08-Pagain-Huayra-removebg-preview.png',
+    '/assets/car_no_background/01-Porche-911-Turbo-removebg-preview.png',
+  ],
+  [Brand.FORD]: [
+    '/assets/car_no_background/04-BMW-M3-GTR-removebg-preview.png',
+    '/assets/car_no_background/06-Audi-RS-Superwagon-removebg-preview.png',
+    '/assets/car_no_background/13-Proche-911-removebg-preview.png',
+  ],
+  [Brand.CHEVROLET]: [
+    '/assets/car_no_background/14-McLAREN-720s-removebg-preview.png',
+    '/assets/car_no_background/11-Mercedes-AMG-GT-removebg-preview.png',
+    '/assets/car_no_background/09-Mercede-AMG-removebg-preview.png',
+  ],
+};
+
+function pickCarImage(brand: number): string {
+  const pool = CAR_IMAGES[brand] ?? CAR_IMAGES[Brand.LAMBORGHINI];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
 import logger from '../../config/logger';
 import {
   getTier,
@@ -182,6 +211,7 @@ export class GachaService {
           baseAcceleration: result.stats.acceleration,
           baseHandling: result.stats.handling,
           baseDrift: result.stats.drift,
+          imageUrl: pickCarImage(result.brand),
         },
       });
     } else {
