@@ -4,6 +4,7 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { gachaLimiter } from '../middleware/rateLimit';
 import { validate } from '../middleware/validator';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
+import { questService } from '../services/quest/QuestService';
 import Joi from 'joi';
 
 const router = Router();
@@ -107,6 +108,9 @@ router.post(
 
     const reveal = await gachaService.generateReveal(req.user.address, tierId, is_car);
 
+    // Update quest progress (fire-and-forget)
+    questService.updateProgress(req.user.address, 'GACHA_PULL', 1);
+
     res.json({
       success: true,
       data: reveal,
@@ -177,6 +181,66 @@ router.post(
     res.json({
       success: true,
       data: simulation,
+    });
+  })
+);
+
+// Token costs per tier for token-based gacha
+const TOKEN_GACHA_COSTS: Record<number, number> = { 1: 500, 2: 1500, 3: 3000 };
+
+/**
+ * POST /api/gacha/pull-with-tokens
+ * Spend in-game tokens to do a gacha pull (no blockchain needed)
+ */
+router.post(
+  '/pull-with-tokens',
+  authenticate,
+  gachaLimiter,
+  validate(
+    Joi.object({
+      tierId: Joi.number().integer().min(1).max(3).required(),
+      is_car: Joi.boolean().required(),
+    })
+  ),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw new AppError('Authentication required', 401);
+
+    const { tierId, is_car } = req.body;
+    const cost = TOKEN_GACHA_COSTS[tierId];
+    if (!cost) throw new AppError('Invalid tier', 400);
+
+    // Check balance
+    const { prismaClient } = await import('../config/database');
+    const user = await prismaClient.user.findUnique({ where: { address: req.user.address } });
+    if (!user) throw new AppError('User not found', 404);
+
+    const balance = (user as any).tokenBalance ?? 0;
+    if (balance < cost) {
+      throw new AppError(`Not enough tokens. Need ${cost}, have ${balance}.`, 400);
+    }
+
+    // Deduct tokens
+    await prismaClient.user.update({
+      where: { address: req.user.address },
+      data: { tokenBalance: { decrement: cost } },
+    });
+
+    // Generate gacha result
+    const reveal = await gachaService.generateReveal(req.user.address, tierId, is_car);
+
+    // Update quest progress
+    questService.updateProgress(req.user.address, 'GACHA_PULL', 1);
+
+    // Return result with new balance
+    const updatedUser = await prismaClient.user.findUnique({ where: { address: req.user.address } });
+
+    res.json({
+      success: true,
+      data: {
+        ...reveal,
+        tokenCost: cost,
+        newTokenBalance: (updatedUser as any)?.tokenBalance ?? 0,
+      },
     });
   })
 );

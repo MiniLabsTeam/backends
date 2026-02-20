@@ -140,6 +140,45 @@ async function main() {
     console.log(`  Stats:    Speed ${car.baseSpeed}, Handling ${car.baseHandling}, Accel ${car.baseAcceleration}`);
   }
 
+  // 3. Seed Daily + Weekly Quests
+  console.log('🏆 Seeding daily & weekly quests...');
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const monday = new Date(today);
+  const dow = monday.getDay();
+  monday.setDate(monday.getDate() - (dow === 0 ? 6 : dow - 1));
+  const nextMonday = new Date(monday);
+  nextMonday.setDate(nextMonday.getDate() + 7);
+
+  const dk = today.toISOString().split('T')[0];
+  const wk = monday.toISOString().split('T')[0];
+
+  const dailyDefs = [
+    { id: `daily-race-${dk}`,     name: 'Race of the Day',     description: 'Complete 1 race',           type: 'DAILY', requirement: JSON.stringify({ type: 'RACE_COMPLETE',     count: 1    }), reward: JSON.stringify({ tokens: 100  }), startDate: today, endDate: tomorrow },
+    { id: `daily-win-${dk}`,      name: 'Taste of Victory',    description: 'Win 1 race',                type: 'DAILY', requirement: JSON.stringify({ type: 'RACE_WIN',          count: 1    }), reward: JSON.stringify({ tokens: 500  }), startDate: today, endDate: tomorrow },
+    { id: `daily-gacha-${dk}`,    name: 'Lucky Draw',          description: 'Do 1 gacha pull',          type: 'DAILY', requirement: JSON.stringify({ type: 'GACHA_PULL',         count: 1    }), reward: JSON.stringify({ tokens: 200  }), startDate: today, endDate: tomorrow },
+    { id: `daily-distance-${dk}`, name: 'Road Warrior',        description: 'Travel 500m in Endless mode', type: 'DAILY', requirement: JSON.stringify({ type: 'DISTANCE_COVERED', count: 500  }), reward: JSON.stringify({ tokens: 300  }), startDate: today, endDate: tomorrow },
+  ];
+  const weeklyDefs = [
+    { id: `weekly-wins-${wk}`,     name: 'Champion of the Week', description: 'Win 3 races this week',          type: 'WEEKLY', requirement: JSON.stringify({ type: 'RACE_WIN',          count: 3    }), reward: JSON.stringify({ tokens: 2000 }), startDate: monday, endDate: nextMonday },
+    { id: `weekly-races-${wk}`,    name: 'Frequent Racer',       description: 'Complete 5 races this week',     type: 'WEEKLY', requirement: JSON.stringify({ type: 'RACE_COMPLETE',     count: 5    }), reward: JSON.stringify({ tokens: 1000 }), startDate: monday, endDate: nextMonday },
+    { id: `weekly-gacha-${wk}`,    name: 'Fortune Hunter',       description: 'Do 5 gacha pulls this week',     type: 'WEEKLY', requirement: JSON.stringify({ type: 'GACHA_PULL',         count: 5    }), reward: JSON.stringify({ tokens: 1500 }), startDate: monday, endDate: nextMonday },
+    { id: `weekly-distance-${wk}`, name: 'Marathon Driver',      description: 'Travel 5,000m total this week',  type: 'WEEKLY', requirement: JSON.stringify({ type: 'DISTANCE_COVERED', count: 5000 }), reward: JSON.stringify({ tokens: 1200 }), startDate: monday, endDate: nextMonday },
+  ];
+
+  for (const q of [...dailyDefs, ...weeklyDefs]) {
+    await prisma.quest.upsert({
+      where: { id: q.id },
+      update: {},
+      create: { ...q, isActive: true },
+    });
+  }
+  console.log(`✅ Created ${dailyDefs.length} daily + ${weeklyDefs.length} weekly quests\n`);
+
   console.log('\n' + '='.repeat(60));
   console.log('✅ Seeding completed successfully!\n');
   console.log('💡 Next steps:');

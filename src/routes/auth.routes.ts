@@ -103,6 +103,7 @@ router.get(
         address: user.address,
         username: user.username,
         email: user.email,
+        tokenBalance: (user as any).tokenBalance ?? 0,
         createdAt: user.createdAt,
         lastLogin: user.lastLogin,
       },

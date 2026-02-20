@@ -14,6 +14,7 @@ model User {
   username          String?  @unique
   email             String?  @unique
   nonce             String   @default(uuid())
+  tokenBalance      Int      @default(0)
   lastLogin         DateTime @default(now())
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

@@ -10,6 +10,7 @@
 import { prismaClient } from '../../config/database';
 import { cache } from '../../config/redis';
 import { signingService } from '../signing/SigningService';
+import { questService } from '../quest/QuestService';
 import { broadcastService } from '../../websocket/BroadcastService';
 import logger from '../../config/logger';
 import {
@@ -526,6 +527,16 @@ export class GameEngineService {
         where: { roomUid: roomId },
         data: { status: 'FINISHED' },
       });
+
+      // Update quest progress for all real players (fire-and-forget)
+      const realPlayers = state.players.filter((p: any) => p.playerId !== 'BOT_AI_1');
+      for (const p of realPlayers) {
+        const addr = p.playerId;
+        const distCovered = Math.floor(p.position?.z ?? 0);
+        questService.updateProgress(addr, 'RACE_COMPLETE', 1);
+        if (distCovered > 0) questService.updateProgress(addr, 'DISTANCE_COVERED', distCovered);
+        if (addr === winner.playerId) questService.updateProgress(addr, 'RACE_WIN', 1);
+      }
 
       // Save final result to Redis (for clients to fetch)
       const result = {
