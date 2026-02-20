@@ -1,4 +1,5 @@
 import * as ed from '@noble/ed25519';
+// @ts-ignore - kept for potential future use
 import { getBackendKeypair } from '../../config/blockchain';
 import { env } from '../../config/env';
 import { prismaClient } from '../../config/database';
