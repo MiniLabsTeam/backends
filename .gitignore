@@ -53,3 +53,6 @@ dump.rdb
 
 # PM2
 .pm2/
+
+#scripts
+scripts/*.ts
