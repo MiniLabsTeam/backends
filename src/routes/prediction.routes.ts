@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import { prismaClient } from '../config/database';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
+import { validate } from '../middleware/validator';
+import Joi from 'joi';
 
 const router = Router();
 
@@ -272,6 +274,128 @@ router.get(
         totalWagered: totalWagered._sum.amount || '0',
         totalWon: totalWon._sum.payout || '0',
       },
+    });
+  })
+);
+
+/**
+ * POST /api/prediction/bet
+ * Place a bet on a prediction pool using in-game tokens
+ */
+router.post(
+  '/bet',
+  authenticate,
+  validate(
+    Joi.object({
+      poolId: Joi.string().required(),
+      predictedWinnerId: Joi.string().required(),
+      amount: Joi.number().integer().min(1).required(),
+    })
+  ),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw new AppError('Authentication required', 401);
+
+    const { poolId, predictedWinnerId, amount } = req.body;
+
+    const pool = await prismaClient.predictionPool.findUnique({
+      where: { id: poolId },
+      include: { room: { include: { players: true } } },
+    });
+    if (!pool) throw new AppError('Prediction pool not found', 404);
+    if (pool.isSettled) throw new AppError('Pool is already settled', 400);
+
+    // Verify predictedWinnerId is a player in the room
+    const isValidPlayer = pool.room.players.some(
+      (p) => p.playerAddress === predictedWinnerId
+    );
+    if (!isValidPlayer) throw new AppError('Invalid predicted winner', 400);
+
+    // Check token balance
+    const user = await prismaClient.user.findUnique({
+      where: { address: req.user.address },
+    });
+    if (!user) throw new AppError('User not found', 404);
+    const balance = (user as any).tokenBalance ?? 0;
+    if (balance < amount) {
+      throw new AppError(`Not enough tokens. Need ${amount}, have ${balance}.`, 400);
+    }
+
+    // Deduct tokens & create bet atomically
+    await prismaClient.$transaction([
+      prismaClient.user.update({
+        where: { address: req.user.address },
+        data: { tokenBalance: { decrement: amount } },
+      }),
+      prismaClient.bet.create({
+        data: {
+          poolId,
+          bettor: req.user.address,
+          predictedWinner: predictedWinnerId,
+          amount: amount.toString(),
+        },
+      }),
+      prismaClient.predictionPool.update({
+        where: { id: poolId },
+        data: {
+          totalPool: (BigInt(pool.totalPool) + BigInt(amount)).toString(),
+        },
+      }),
+    ]);
+
+    res.json({ success: true, message: 'Bet placed successfully' });
+  })
+);
+
+/**
+ * POST /api/prediction/claim/:betId
+ * Claim payout for a winning bet (awarded as in-game tokens)
+ */
+router.post(
+  '/claim/:betId',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw new AppError('Authentication required', 401);
+
+    const { betId } = req.params;
+
+    const bet = await prismaClient.bet.findUnique({
+      where: { id: betId },
+      include: { pool: true },
+    });
+    if (!bet) throw new AppError('Bet not found', 404);
+    if (bet.bettor !== req.user.address) throw new AppError('Not your bet', 403);
+    if (bet.hasClaimed) throw new AppError('Already claimed', 400);
+    if (!bet.pool.isSettled) throw new AppError('Pool not settled yet', 400);
+    if (bet.predictedWinner !== bet.pool.actualWinner) {
+      throw new AppError('This bet did not win', 400);
+    }
+
+    // Calculate payout: proportional share of total pool
+    const winnerBetsAgg = await prismaClient.bet.aggregate({
+      where: { poolId: bet.poolId, predictedWinner: bet.pool.actualWinner! },
+      _sum: { amount: true },
+    });
+    const totalPool = BigInt(bet.pool.totalPool);
+    const winnerTotal = BigInt(winnerBetsAgg._sum.amount || '0');
+    const betAmount = BigInt(bet.amount);
+    const payout = winnerTotal > 0n ? (betAmount * totalPool) / winnerTotal : 0n;
+
+    // Mark claimed & credit tokens
+    await prismaClient.$transaction([
+      prismaClient.bet.update({
+        where: { id: betId },
+        data: { hasClaimed: true, payout: payout.toString(), claimedAt: new Date() },
+      }),
+      prismaClient.user.update({
+        where: { address: req.user.address },
+        data: { tokenBalance: { increment: Number(payout) } },
+      }),
+    ]);
+
+    res.json({
+      success: true,
+      data: { payout: payout.toString() },
+      message: `Claimed ${payout.toString()} tokens!`,
     });
   })
 );

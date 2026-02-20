@@ -4,6 +4,7 @@ import { generateNonce } from '../../utils/crypto';
 import { generateToken, generateRefreshToken, verifyRefreshToken } from '../../middleware/auth';
 import logger from '../../config/logger';
 import { User } from '../../types';
+import { verifyPersonalMessage } from '@mysten/sui.js/verify';
 
 /**
  * AuthService
@@ -197,27 +198,31 @@ This request will not trigger a blockchain transaction or cost any gas fees.`;
     signature: string,
     message: string
   ): Promise<boolean> {
-    // TODO: Implement proper Sui wallet signature verification
-    // For now, this is a placeholder that accepts any signature
-    // In production, you would:
-    // 1. Parse the signature
-    // 2. Recover the public key from signature
-    // 3. Verify the public key matches the address
-    // 4. Verify the message was signed correctly
+    if (!signature || !message) return false;
 
-    // Placeholder validation
-    if (!signature || signature.length < 10) {
+    try {
+      // Sui personal message signatures are base64-encoded.
+      // verifyPersonalMessage recovers the public key from the signature
+      // and returns it; we then derive the Sui address and compare.
+      const msgBytes = new TextEncoder().encode(message);
+      const publicKey = await verifyPersonalMessage(msgBytes, signature);
+      const derivedAddress = publicKey.toSuiAddress();
+
+      const matches = derivedAddress.toLowerCase() === address.toLowerCase();
+      if (!matches) {
+        logger.warn(`Signature address mismatch: derived=${derivedAddress}, claimed=${address}`);
+      }
+      return matches;
+    } catch (err) {
+      // Fallback for development environments where the wallet may send
+      // a non-standard signature format (e.g. plain hex from test-login flow).
+      if (process.env.NODE_ENV !== 'production') {
+        logger.warn(`Signature verification failed (${err}), allowing in non-production mode`);
+        return typeof signature === 'string' && signature.length >= 10;
+      }
+      logger.error(`Signature verification error: ${err}`);
       return false;
     }
-
-    if (!message || !message.includes(address)) {
-      return false;
-    }
-
-    // For development, always return true
-    // TODO: Replace with actual verification
-    logger.warn('Using placeholder signature verification - implement proper verification for production!');
-    return true;
   }
 
   /**

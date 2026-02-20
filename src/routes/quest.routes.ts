@@ -43,6 +43,9 @@ function activeWhere(type?: string) {
 router.get('/daily', authenticate, asyncHandler(async (req: AuthRequest, res: Response) => {
   if (!req.user) throw new AppError('Authentication required', 401);
 
+  // Auto-create today's quests if they don't exist yet
+  await questService.ensureQuestsExist();
+
   const quests = await prismaClient.quest.findMany({
     where: activeWhere('DAILY'),
     include: { progress: { where: { playerAddress: req.user.address } } },
@@ -57,6 +60,9 @@ router.get('/daily', authenticate, asyncHandler(async (req: AuthRequest, res: Re
  */
 router.get('/weekly', authenticate, asyncHandler(async (req: AuthRequest, res: Response) => {
   if (!req.user) throw new AppError('Authentication required', 401);
+
+  // Auto-create this week's quests if they don't exist yet
+  await questService.ensureQuestsExist();
 
   const quests = await prismaClient.quest.findMany({
     where: activeWhere('WEEKLY'),

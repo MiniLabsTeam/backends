@@ -267,6 +267,13 @@ export class GameEngineService {
         data: { status: 'RACING' },
       });
 
+      // Auto-create a prediction pool for this race (fire-and-forget)
+      prismaClient.predictionPool.upsert({
+        where: { roomUid: roomUid },
+        create: { roomId: room.id, roomUid: roomUid },
+        update: {},
+      }).catch((err: any) => logger.warn(`Prediction pool upsert failed: ${err.message}`));
+
       // Initialize player states
       const playerStates: PlayerState[] = await Promise.all(
         room.players.map(async (rp) => {
@@ -527,6 +534,12 @@ export class GameEngineService {
         where: { roomUid: roomId },
         data: { status: 'FINISHED' },
       });
+
+      // Settle prediction pool (fire-and-forget)
+      prismaClient.predictionPool.updateMany({
+        where: { roomUid: roomId, isSettled: false },
+        data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
+      }).catch((err: any) => logger.warn(`Prediction settle failed: ${err.message}`));
 
       // Update quest progress for all real players (fire-and-forget)
       const realPlayers = state.players.filter((p: any) => p.playerId !== 'BOT_AI_1');

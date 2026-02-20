@@ -3,6 +3,9 @@ import { getSuiClient } from '../config/blockchain';
 import { env } from '../config/env';
 import logger from '../config/logger';
 import { eventTypes } from '../config/blockchain';
+import { cache } from '../config/redis';
+
+const CURSOR_REDIS_KEY = 'indexer:cursor';
 
 /**
  * EventListener
@@ -34,7 +37,10 @@ export class EventListener {
     }
 
     this.isRunning = true;
-    this.lastCheckpoint = startCheckpoint || null;
+
+    // Load persisted cursor from Redis (resume from last processed event)
+    const savedCursor = await cache.get<string>(CURSOR_REDIS_KEY).catch(() => null);
+    this.lastCheckpoint = startCheckpoint || savedCursor || null;
 
     logger.info('🎧 EventListener started');
     logger.info(`📍 Starting from checkpoint: ${this.lastCheckpoint || 'latest'}`);
@@ -52,46 +58,47 @@ export class EventListener {
   }
 
   /**
-   * Poll for new events
+   * Poll for new events using cursor-based pagination to avoid reprocessing.
    */
   private async pollEvents(onEvent: (event: SuiEvent) => Promise<void>): Promise<void> {
     while (this.isRunning) {
       try {
-        // Get all event types we're interested in
         const eventTypesToListen = Object.values(eventTypes);
+        let anyNewEvents = false;
 
-        // Query events for each type
         for (const eventType of eventTypesToListen) {
           const events = await this.queryEvents(eventType);
 
-          // Process events in order
           for (const event of events) {
             try {
               await onEvent(event);
+              anyNewEvents = true;
 
-              // Update checkpoint after successful processing
+              // Persist cursor to Redis after each successfully processed event
               if (event.id.txDigest) {
                 this.lastCheckpoint = event.id.txDigest;
+                // TTL = 1 year (cursor should persist indefinitely)
+                cache.set(CURSOR_REDIS_KEY, this.lastCheckpoint, 31_536_000).catch(() => {});
               }
             } catch (error) {
               logger.error(`Failed to process event ${event.id.txDigest}:`, error);
-              // Continue processing other events even if one fails
             }
           }
         }
 
-        // Wait before next poll
-        await this.sleep(this.pollInterval);
+        if (!anyNewEvents) {
+          // No new events — wait before polling again
+          await this.sleep(this.pollInterval);
+        }
       } catch (error) {
         logger.error('Error in polling loop:', error);
-        // Wait before retrying
         await this.sleep(this.pollInterval * 2);
       }
     }
   }
 
   /**
-   * Query events of a specific type
+   * Query events of a specific type, starting from the last known cursor.
    */
   private async queryEvents(eventType: string): Promise<SuiEvent[]> {
     try {
@@ -101,6 +108,9 @@ export class EventListener {
 
       const result = await this.client.queryEvents({
         query: filter,
+        cursor: this.lastCheckpoint
+          ? { txDigest: this.lastCheckpoint, eventSeq: '0' }
+          : undefined,
         order: 'ascending',
         limit: env.indexerBatchSize,
       });
