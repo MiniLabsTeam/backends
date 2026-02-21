@@ -107,9 +107,9 @@ export const authLimiter = rateLimit({
   store: new RedisStore('rl:auth:') as any,
 });
 
-// Gacha rate limiter (3 pulls per minute)
+// Gacha rate limiter (3 pulls per 3 seconds)
 export const gachaLimiter = rateLimit({
-  windowMs: env.rateLimitWindowMs,
+  windowMs: 3000,
   max: 3,
   message: {
     success: false,

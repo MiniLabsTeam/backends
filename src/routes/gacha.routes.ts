@@ -1,10 +1,15 @@
 import { Router, Response } from 'express';
+import { SuiClient } from '@mysten/sui.js/client';
+import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
+import { TransactionBlock } from '@mysten/sui.js/transactions';
 import { gachaService } from '../services/gacha/GachaService';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { gachaLimiter } from '../middleware/rateLimit';
 import { validate } from '../middleware/validator';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
 import { questService } from '../services/quest/QuestService';
+import { env } from '../config/env';
+import logger from '../config/logger';
 import Joi from 'joi';
 
 const router = Router();
@@ -92,7 +97,8 @@ router.post(
 router.post(
   '/reveal',
   authenticate,
-  gachaLimiter,
+  // NOTE: No rate limiter here! Reveal MUST always succeed after commit.
+  // Rate limiting on /pricing is sufficient to prevent abuse.
   validate(
     Joi.object({
       tierId: Joi.number().integer().min(1).max(3).required(),
@@ -242,6 +248,80 @@ router.post(
         newTokenBalance: (updatedUser as any)?.tokenBalance ?? 0,
       },
     });
+  })
+);
+
+/**
+ * POST /api/gacha/clear-stuck
+ * Admin clears a stuck pending commit for the authenticated user.
+ * Call this when commit succeeded but reveal failed, leaving the user stuck.
+ */
+router.post(
+  '/clear-stuck',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      throw new AppError('Authentication required', 401);
+    }
+
+    const playerAddress = req.user.address;
+    const RPC_URL = env.onechainRpcUrl || 'https://rpc-testnet.onelabs.cc:443';
+    const PACKAGE_ID = env.packageId;
+    const GACHA_CONFIG_ID = env.gachaConfigId;
+    const GACHA_STATE_ID = env.gachaStateId;
+
+    if (!PACKAGE_ID || !GACHA_CONFIG_ID || !GACHA_STATE_ID) {
+      throw new AppError('Contract not configured', 500);
+    }
+
+    try {
+      const client = new SuiClient({ url: RPC_URL });
+      const keypair = Ed25519Keypair.fromSecretKey(
+        Buffer.from(env.backendPrivateKey.replace('0x', ''), 'hex')
+      );
+      const sender = keypair.toSuiAddress();
+
+      const coins = await client.getCoins({ owner: sender, coinType: '0x2::oct::OCT' });
+      if (coins.data.length === 0) {
+        throw new AppError('Backend wallet has no gas', 500);
+      }
+
+      const tx = new TransactionBlock();
+      tx.setGasPayment([{
+        objectId: coins.data[0].coinObjectId,
+        version: coins.data[0].version,
+        digest: coins.data[0].digest,
+      }]);
+
+      tx.moveCall({
+        target: `${PACKAGE_ID}::gacha::admin_clear_commit`,
+        typeArguments: ['0x2::oct::OCT'],
+        arguments: [
+          tx.object(GACHA_CONFIG_ID),
+          tx.object(GACHA_STATE_ID),
+          tx.pure(playerAddress, 'address'),
+        ],
+      });
+
+      const result = await client.signAndExecuteTransactionBlock({
+        signer: keypair,
+        transactionBlock: tx,
+        options: { showEffects: true },
+      });
+
+      logger.info(`Cleared stuck commit for ${playerAddress}. Digest: ${result.digest}`);
+
+      res.json({
+        success: true,
+        data: {
+          message: 'Stuck commit cleared. You can gacha again.',
+          digest: result.digest,
+        },
+      });
+    } catch (error: any) {
+      logger.error(`Failed to clear stuck commit for ${playerAddress}:`, error);
+      throw new AppError(`Failed to clear stuck commit: ${error.message}`, 500);
+    }
   })
 );
 
