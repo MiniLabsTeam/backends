@@ -43,6 +43,7 @@ export class AuthService {
         data: {
           address,
           nonce: generateNonce(),
+          tokenBalance: 1000, // Starting tokens for prediction betting
         },
       });
 

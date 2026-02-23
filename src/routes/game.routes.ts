@@ -186,6 +186,41 @@ router.get(
 );
 
 /**
+ * GET /api/game/rooms/live
+ * Get currently racing rooms (for spectators)
+ */
+router.get(
+  '/rooms/live',
+  asyncHandler(async (req, res: Response) => {
+    const rooms = await prismaClient.room.findMany({
+      where: {
+        status: { in: ['RACING', 'STARTED'] },
+        gameMode: { not: { endsWith: '_VS_AI' } },
+      },
+      include: {
+        players: {
+          include: {
+            user: {
+              select: {
+                address: true,
+                username: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
+    res.json({
+      success: true,
+      data: rooms,
+    });
+  })
+);
+
+/**
  * GET /api/game/:roomUid/state
  * Get current game state (for polling)
  */

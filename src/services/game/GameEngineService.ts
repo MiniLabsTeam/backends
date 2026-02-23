@@ -267,12 +267,14 @@ export class GameEngineService {
         data: { status: 'RACING' },
       });
 
-      // Auto-create a prediction pool for this race (fire-and-forget)
-      prismaClient.predictionPool.upsert({
-        where: { roomUid: roomUid },
-        create: { roomId: room.id, roomUid: roomUid },
-        update: {},
-      }).catch((err: any) => logger.warn(`Prediction pool upsert failed: ${err.message}`));
+      // Auto-create a prediction pool for PvP races only (skip AI games)
+      if (!room.gameMode.endsWith('_VS_AI')) {
+        prismaClient.predictionPool.upsert({
+          where: { roomUid: roomUid },
+          create: { roomId: room.id, roomUid: roomUid },
+          update: {},
+        }).catch((err: any) => logger.warn(`Prediction pool upsert failed: ${err.message}`));
+      }
 
       // Initialize player states
       const playerStates: PlayerState[] = await Promise.all(
@@ -481,22 +483,8 @@ export class GameEngineService {
         throw new Error('Room not found');
       }
 
-      // Sign race result (use dummy signature for testing if signing fails)
-      let signature;
-      try {
-        signature = await signingService.signRaceResult(
-          roomId,
-          winner.playerId,
-          (winner.finishTime || state.gameTime).toString()
-        );
-      } catch (signError) {
-        logger.warn(`⚠️  Signing failed, using dummy signature for testing: ${signError}`);
-        signature = {
-          signature: '0x' + '00'.repeat(64),
-          message: '0x' + '00'.repeat(32),
-          nonce: Date.now().toString(),
-        };
-      }
+      // Detect if this is a vs-AI game (has bot players)
+      const isAIGame = state.players.some((p: any) => p.playerId.startsWith('BOT_AI'));
 
       // Prepare rankings
       const rankings = state.players
@@ -510,39 +498,60 @@ export class GameEngineService {
           finalTime: p.finishTime || state.gameTime,
         }));
 
-      // Save race result to database
-      await prismaClient.race.create({
-        data: {
-          roomId: room.id,
-          roomUid: roomId,
-          winner: winner.playerId,
-          finishTime: (winner.finishTime || state.gameTime).toString(),
-          prizePool: room.entryFee,
-          raceData: JSON.stringify({
-            mode: 'ENDLESS_RACE',
-            duration: state.gameTime,
-            finalStandings: rankings,
-            trackSections: state.trackSection,
-            totalObstacles: state.obstacles.length,
-            totalPowerUps: state.powerUps.length,
-          }),
-        },
-      });
+      let signature = {
+        signature: '0x' + '00'.repeat(64),
+        message: '0x' + '00'.repeat(32),
+        nonce: Date.now().toString(),
+      };
 
-      // Update room status
+      if (!isAIGame) {
+        // Sign race result for on-chain validation (PvP only)
+        try {
+          signature = await signingService.signRaceResult(
+            roomId,
+            winner.playerId,
+            (winner.finishTime || state.gameTime).toString()
+          );
+        } catch (signError) {
+          logger.warn(`⚠️  Signing failed, using dummy signature: ${signError}`);
+        }
+
+        // Save race result to database (PvP only)
+        await prismaClient.race.create({
+          data: {
+            roomId: room.id,
+            roomUid: roomId,
+            winner: winner.playerId,
+            finishTime: (winner.finishTime || state.gameTime).toString(),
+            prizePool: room.entryFee,
+            raceData: JSON.stringify({
+              mode: 'ENDLESS_RACE',
+              duration: state.gameTime,
+              finalStandings: rankings,
+              trackSections: state.trackSection,
+              totalObstacles: state.obstacles.length,
+              totalPowerUps: state.powerUps.length,
+            }),
+          },
+        });
+
+        // Settle prediction pool (PvP only, fire-and-forget)
+        prismaClient.predictionPool.updateMany({
+          where: { roomUid: roomId, isSettled: false },
+          data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
+        }).catch((err: any) => logger.warn(`Prediction settle failed: ${err.message}`));
+      } else {
+        logger.info(`🤖 AI game ${roomId} — skipping DB race save & blockchain validation`);
+      }
+
+      // Update room status (always)
       await prismaClient.room.update({
         where: { roomUid: roomId },
         data: { status: 'FINISHED' },
       });
 
-      // Settle prediction pool (fire-and-forget)
-      prismaClient.predictionPool.updateMany({
-        where: { roomUid: roomId, isSettled: false },
-        data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
-      }).catch((err: any) => logger.warn(`Prediction settle failed: ${err.message}`));
-
       // Update quest progress for all real players (fire-and-forget)
-      const realPlayers = state.players.filter((p: any) => p.playerId !== 'BOT_AI_1');
+      const realPlayers = state.players.filter((p: any) => p.playerId.startsWith('BOT_AI') === false);
       for (const p of realPlayers) {
         const addr = p.playerId;
         const distCovered = Math.floor(p.position?.z ?? 0);

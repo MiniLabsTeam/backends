@@ -4,6 +4,10 @@ import { authenticate, AuthRequest } from '../middleware/auth';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
 import { validate } from '../middleware/validator';
 import Joi from 'joi';
+import { getSuiClient } from '../config/blockchain';
+
+const OCT_COIN_TYPE = '0x2::oct::OCT';
+const OCT_DECIMALS = 9; // 1 OCT = 1_000_000_000 MIST
 
 const router = Router();
 
@@ -15,7 +19,12 @@ router.get(
   '/pools',
   asyncHandler(async (req, res: Response) => {
     const pools = await prismaClient.predictionPool.findMany({
-      where: { isSettled: false },
+      where: {
+        isSettled: false,
+        room: {
+          status: { notIn: ['FINISHED', 'CANCELLED', 'STARTED'] },
+        },
+      },
       include: {
         room: {
           include: {
@@ -252,11 +261,11 @@ router.get(
           },
         },
       }),
-      prismaClient.bet.aggregate({
+      (prismaClient.bet as any).aggregate({
         where: { bettor: req.user.address },
         _sum: { amount: true },
       }),
-      prismaClient.bet.aggregate({
+      (prismaClient.bet as any).aggregate({
         where: {
           bettor: req.user.address,
           hasClaimed: true,
@@ -271,8 +280,8 @@ router.get(
         totalBets,
         wonBets,
         winRate: totalBets > 0 ? (wonBets / totalBets) * 100 : 0,
-        totalWagered: totalWagered._sum.amount || '0',
-        totalWon: totalWon._sum.payout || '0',
+        totalWagered: totalWagered._sum?.amount || '0',
+        totalWon: totalWon._sum?.payout || '0',
       },
     });
   })
@@ -310,39 +319,55 @@ router.post(
     );
     if (!isValidPlayer) throw new AppError('Invalid predicted winner', 400);
 
-    // Check token balance
-    const user = await prismaClient.user.findUnique({
-      where: { address: req.user.address },
+    // Check on-chain OCT balance
+    const client = getSuiClient();
+    const betAmountMist = BigInt(amount) * BigInt(10 ** OCT_DECIMALS); // Convert OCT to MIST
+
+    // Get total already-bet amount for this user (uncommitted bets)
+    const existingBets = await (prismaClient.bet as any).aggregate({
+      where: {
+        bettor: req.user.address,
+        pool: { isSettled: false },
+      },
+      _sum: { amount: true },
     });
-    if (!user) throw new AppError('User not found', 404);
-    const balance = (user as any).tokenBalance ?? 0;
-    if (balance < amount) {
-      throw new AppError(`Not enough tokens. Need ${amount}, have ${balance}.`, 400);
+    const alreadyBetMist = BigInt(existingBets._sum?.amount || '0');
+
+    // Fetch on-chain balance
+    const balanceResult = await client.getBalance({
+      owner: req.user.address,
+      coinType: OCT_COIN_TYPE,
+    });
+    const onChainBalance = BigInt(balanceResult.totalBalance);
+    const availableBalance = onChainBalance - alreadyBetMist;
+    const availableOCT = Number(availableBalance) / (10 ** OCT_DECIMALS);
+
+    if (availableBalance < betAmountMist) {
+      throw new AppError(
+        `Not enough OCT. Need ${amount} OCT, available ${availableOCT.toFixed(2)} OCT (on-chain: ${(Number(onChainBalance) / 10 ** OCT_DECIMALS).toFixed(2)} OCT, already bet: ${(Number(alreadyBetMist) / 10 ** OCT_DECIMALS).toFixed(2)} OCT).`,
+        400
+      );
     }
 
-    // Deduct tokens & create bet atomically
+    // Create bet & update pool atomically (store in MIST)
     await prismaClient.$transaction([
-      prismaClient.user.update({
-        where: { address: req.user.address },
-        data: { tokenBalance: { decrement: amount } },
-      }),
       prismaClient.bet.create({
         data: {
           poolId,
           bettor: req.user.address,
           predictedWinner: predictedWinnerId,
-          amount: amount.toString(),
+          amount: betAmountMist.toString(),
         },
       }),
       prismaClient.predictionPool.update({
         where: { id: poolId },
         data: {
-          totalPool: (BigInt(pool.totalPool) + BigInt(amount)).toString(),
+          totalPool: (BigInt(pool.totalPool) + betAmountMist).toString(),
         },
       }),
     ]);
 
-    res.json({ success: true, message: 'Bet placed successfully' });
+    res.json({ success: true, message: `Bet ${amount} OCT placed successfully` });
   })
 );
 
@@ -370,32 +395,27 @@ router.post(
       throw new AppError('This bet did not win', 400);
     }
 
-    // Calculate payout: proportional share of total pool
-    const winnerBetsAgg = await prismaClient.bet.aggregate({
+    // Calculate payout: proportional share of total pool (in MIST)
+    const winnerBetsAgg = await (prismaClient.bet as any).aggregate({
       where: { poolId: bet.poolId, predictedWinner: bet.pool.actualWinner! },
       _sum: { amount: true },
     });
     const totalPool = BigInt(bet.pool.totalPool);
-    const winnerTotal = BigInt(winnerBetsAgg._sum.amount || '0');
+    const winnerTotal = BigInt(winnerBetsAgg._sum?.amount || '0');
     const betAmount = BigInt(bet.amount);
     const payout = winnerTotal > 0n ? (betAmount * totalPool) / winnerTotal : 0n;
+    const payoutOCT = Number(payout) / (10 ** OCT_DECIMALS);
 
-    // Mark claimed & credit tokens
-    await prismaClient.$transaction([
-      prismaClient.bet.update({
-        where: { id: betId },
-        data: { hasClaimed: true, payout: payout.toString(), claimedAt: new Date() },
-      }),
-      prismaClient.user.update({
-        where: { address: req.user.address },
-        data: { tokenBalance: { increment: Number(payout) } },
-      }),
-    ]);
+    // Mark claimed in DB (on-chain payout via claim_payout contract)
+    await prismaClient.bet.update({
+      where: { id: betId },
+      data: { hasClaimed: true, payout: payout.toString(), claimedAt: new Date() },
+    });
 
     res.json({
       success: true,
-      data: { payout: payout.toString() },
-      message: `Claimed ${payout.toString()} tokens!`,
+      data: { payout: payout.toString(), payoutOCT },
+      message: `Payout: ${payoutOCT.toFixed(2)} OCT`,
     });
   })
 );

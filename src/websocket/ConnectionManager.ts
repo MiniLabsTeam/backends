@@ -127,6 +127,34 @@ export class ConnectionManager {
       }
     });
 
+    // Spectator join room (watch-only, no player record)
+    socket.on('SPECTATE_JOIN', async (data, callback) => {
+      try {
+        const { roomUid } = data;
+        socket.join(roomUid);
+        this.addSocketToRoom(socket.id, roomUid);
+        logger.info(`👁️ Spectator ${userId} joined room ${roomUid}`);
+        callback?.({ success: true });
+      } catch (error: any) {
+        logger.error(`Error in SPECTATE_JOIN: ${error.message}`);
+        callback?.({ success: false, message: error.message });
+      }
+    });
+
+    // Spectator leave room
+    socket.on('SPECTATE_LEAVE', async (data, callback) => {
+      try {
+        const { roomUid } = data;
+        socket.leave(roomUid);
+        this.removeSocketFromRoom(socket.id, roomUid);
+        logger.info(`👁️ Spectator ${userId} left room ${roomUid}`);
+        callback?.({ success: true });
+      } catch (error: any) {
+        logger.error(`Error in SPECTATE_LEAVE: ${error.message}`);
+        callback?.({ success: false, message: error.message });
+      }
+    });
+
     // Handle disconnect
     socket.on('disconnect', (reason) => {
       this.handleDisconnect(socket, reason);

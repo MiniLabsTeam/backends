@@ -188,7 +188,7 @@ model Race {
   id                String   @id @default(uuid())
   roomId            String   @unique
   roomUid           String   @unique
-  winner            String
+  winner            String?
   finishTime        String   // BigInt as string
   prizePool         String   // BigInt as string
 
@@ -204,7 +204,7 @@ model Race {
 
   // Relations
   room              Room     @relation(fields: [roomId], references: [id])
-  winnerUser        User     @relation(fields: [winner], references: [address])
+  winnerUser        User?    @relation(fields: [winner], references: [address])
 
   @@index([roomUid])
   @@index([winner])
@@ -285,7 +285,6 @@ model Bet {
   pool              PredictionPool @relation(fields: [poolId], references: [id])
   user              User     @relation(fields: [bettor], references: [address])
 
-  @@unique([poolId, bettor])
   @@index([poolId])
   @@index([bettor])
   @@map("bets")
