@@ -23,6 +23,9 @@ import { EndlessRaceEngine } from './EndlessRaceEngine';
 
 const TICK_RATE = 20; // 20 FPS — stable for lane-based game
 const TICK_INTERVAL = 1000 / TICK_RATE; // 50ms
+const PVP_ENTRY_BET_MIST = BigInt(2_000_000_000); // 2 OCT in MIST
+const BETTING_PERIOD_SECONDS = 60; // 60-second betting window
+const PLATFORM_FEE_PERCENT = 5; // 5% platform fee
 
 interface ActiveGame {
   roomId: string;
@@ -38,6 +41,9 @@ export class GameEngineService {
   private static instance: GameEngineService;
   private activeGames: Map<string, ActiveGame> = new Map();
 
+  // Track betting period timers so they can be cancelled
+  private bettingTimers: Map<string, NodeJS.Timeout> = new Map();
+
   private constructor() {
     logger.info('🎮 GameEngineService initialized');
   }
@@ -51,15 +57,30 @@ export class GameEngineService {
 
   /**
    * Create a new game room
+   * For PvP rooms: checks balance and places auto-bet of 2 OCT on creator
    */
   public async createRoom(
     gameMode: string,
-    _creatorAddress: string,
+    creatorAddress: string,
     maxPlayers: number,
     entryFee: string,
     deadline: string
   ): Promise<any> {
     try {
+      const isPvP = !gameMode.endsWith('_VS_AI');
+
+      // For PvP: check creator has enough prediction balance for entry bet
+      if (isPvP) {
+        const user = await prismaClient.user.findUnique({
+          where: { address: creatorAddress },
+          select: { predictionBalance: true },
+        });
+        const balance = BigInt(user?.predictionBalance || '0');
+        if (balance < PVP_ENTRY_BET_MIST) {
+          throw new Error('Insufficient prediction balance. Need at least 2 OCT to create a PvP room. Deposit on the Prediction page first.');
+        }
+      }
+
       const roomUid = `ROOM_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       const roomHash = `HASH_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
@@ -75,7 +96,12 @@ export class GameEngineService {
         },
       });
 
-      logger.info(`Room created: ${room.roomUid} (${gameMode})`);
+      // For PvP: place auto-bet on creator
+      if (isPvP) {
+        await this._placePvPEntryBet(room.id, room.roomUid, creatorAddress);
+      }
+
+      logger.info(`Room created: ${room.roomUid} (${gameMode})${isPvP ? ' [PvP auto-bet placed]' : ''}`);
       return room;
     } catch (error) {
       logger.error(`Failed to create room: ${error}`);
@@ -95,6 +121,194 @@ export class GameEngineService {
     // Use distinct gameMode to mark AI room — no Redis dependency
     const room = await this.createRoom('ENDLESS_RACE_VS_AI', creatorAddress, 2, entryFee, deadline);
     return room;
+  }
+
+  /**
+   * Place PvP entry bet: deduct 2 OCT from predictionBalance, create pool + bet
+   */
+  private async _placePvPEntryBet(roomId: string, roomUid: string, playerAddress: string): Promise<any> {
+    // Guard: skip if this player already placed an entry bet in this pool
+    const existingBet = await prismaClient.predictionPool.findUnique({
+      where: { roomUid },
+      include: { bets: { where: { bettor: playerAddress }, take: 1 } },
+    });
+    if (existingBet && existingBet.bets.length > 0) {
+      logger.info(`🎰 PvP entry bet: ${playerAddress} already has bet in ${roomUid}, skipping`);
+      return existingBet;
+    }
+
+    const user = await prismaClient.user.findUnique({
+      where: { address: playerAddress },
+      select: { predictionBalance: true },
+    });
+    const balance = BigInt(user?.predictionBalance || '0');
+    if (balance < PVP_ENTRY_BET_MIST) {
+      throw new Error('Insufficient prediction balance for PvP entry bet (2 OCT required).');
+    }
+
+    const newBalance = balance - PVP_ENTRY_BET_MIST;
+
+    // Find or create prediction pool, always adding entry bet to totalPool
+    const existingPool = await prismaClient.predictionPool.findUnique({ where: { roomUid } });
+
+    let pool;
+    if (existingPool) {
+      // Pool already exists (second player joining) — add entry bet to totalPool
+      const updatedTotal = BigInt(existingPool.totalPool) + PVP_ENTRY_BET_MIST;
+      pool = await prismaClient.predictionPool.update({
+        where: { roomUid },
+        data: { totalPool: updatedTotal.toString() },
+      });
+    } else {
+      // First player — create pool with initial entry bet
+      pool = await prismaClient.predictionPool.create({
+        data: {
+          roomId,
+          roomUid,
+          totalPool: PVP_ENTRY_BET_MIST.toString(),
+        },
+      });
+    }
+
+    // Deduct balance + create bet atomically
+    await prismaClient.$transaction([
+      prismaClient.user.update({
+        where: { address: playerAddress },
+        data: { predictionBalance: newBalance.toString() },
+      }),
+      prismaClient.bet.create({
+        data: {
+          poolId: pool.id,
+          bettor: playerAddress,
+          predictedWinner: playerAddress, // Bet on self
+          amount: PVP_ENTRY_BET_MIST.toString(),
+        },
+      }),
+    ]);
+
+    logger.info(`🎰 PvP entry bet: ${playerAddress} bet 2 OCT on self in room ${roomUid}`);
+
+    // Re-fetch pool with updated total
+    return prismaClient.predictionPool.findUnique({ where: { roomUid } });
+  }
+
+  /**
+   * Start 60-second betting period after both PvP players join
+   */
+  public async startBettingPeriod(roomUid: string): Promise<void> {
+    const bettingEndsAt = new Date(Date.now() + BETTING_PERIOD_SECONDS * 1000);
+
+    await prismaClient.room.update({
+      where: { roomUid },
+      data: { status: 'BETTING', bettingEndsAt },
+    });
+
+    const pool = await prismaClient.predictionPool.findUnique({
+      where: { roomUid },
+      include: { bets: true },
+    });
+
+    await broadcastService.broadcastBettingStart(roomUid, {
+      bettingEndsAt: bettingEndsAt.toISOString(),
+      pool,
+    });
+
+    logger.info(`🎰 Betting period started for room ${roomUid} — ends at ${bettingEndsAt.toISOString()}`);
+
+    // Countdown timer: broadcast every second
+    let secondsLeft = BETTING_PERIOD_SECONDS;
+    const timer = setInterval(async () => {
+      secondsLeft--;
+      if (secondsLeft <= 0) {
+        clearInterval(timer);
+        this.bettingTimers.delete(roomUid);
+        // Betting period over → start race countdown
+        logger.info(`🎰 Betting period ended for room ${roomUid}, starting race countdown`);
+        await this.startCountdown(roomUid);
+      } else {
+        await broadcastService.broadcastBettingCountdown(roomUid, secondsLeft);
+      }
+    }, 1000);
+
+    this.bettingTimers.set(roomUid, timer);
+  }
+
+  /**
+   * Cancel a room — refund all bets to predictionBalance
+   */
+  public async cancelRoom(roomUid: string, requesterAddress: string): Promise<void> {
+    const room = await prismaClient.room.findUnique({
+      where: { roomUid },
+      include: { players: true },
+    });
+
+    if (!room) throw new Error('Room not found');
+    if (!['WAITING', 'BETTING'].includes(room.status)) {
+      throw new Error('Room can only be cancelled during WAITING or BETTING phase');
+    }
+
+    // Only room creator (first player) can cancel
+    const creator = room.players.sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime())[0];
+    if (!creator || creator.playerAddress !== requesterAddress) {
+      throw new Error('Only the room creator can cancel the room');
+    }
+
+    // Stop betting timer if active
+    const timer = this.bettingTimers.get(roomUid);
+    if (timer) {
+      clearInterval(timer);
+      this.bettingTimers.delete(roomUid);
+    }
+
+    // Refund all bets
+    const pool = await prismaClient.predictionPool.findUnique({
+      where: { roomUid },
+      include: { bets: true },
+    });
+
+    if (pool && pool.bets.length > 0) {
+      // Group bets by bettor to calculate total refund per user
+      const refundMap = new Map<string, bigint>();
+      for (const bet of pool.bets) {
+        const current = refundMap.get(bet.bettor) || 0n;
+        refundMap.set(bet.bettor, current + BigInt(bet.amount));
+      }
+
+      // Refund each user
+      const refundOps = [];
+      for (const [bettor, refundAmount] of refundMap) {
+        const user = await prismaClient.user.findUnique({
+          where: { address: bettor },
+          select: { predictionBalance: true },
+        });
+        const currentBalance = BigInt(user?.predictionBalance || '0');
+        refundOps.push(
+          prismaClient.user.update({
+            where: { address: bettor },
+            data: { predictionBalance: (currentBalance + refundAmount).toString() },
+          })
+        );
+      }
+
+      // Delete bets, pool, update room status — all in one transaction
+      await prismaClient.$transaction([
+        ...refundOps,
+        prismaClient.bet.deleteMany({ where: { poolId: pool.id } }),
+        prismaClient.predictionPool.delete({ where: { id: pool.id } }),
+        prismaClient.room.update({
+          where: { roomUid },
+          data: { status: 'CANCELLED' },
+        }),
+      ]);
+    } else {
+      await prismaClient.room.update({
+        where: { roomUid },
+        data: { status: 'CANCELLED' },
+      });
+    }
+
+    await broadcastService.broadcastRoomCancelled(roomUid);
+    logger.info(`❌ Room ${roomUid} cancelled by ${requesterAddress}, all bets refunded`);
   }
 
   /**
@@ -118,6 +332,7 @@ export class GameEngineService {
 
   /**
    * Join a game room
+   * For PvP: checks balance, places auto-bet, triggers betting period when full
    */
   public async joinRoom(
     roomUid: string,
@@ -143,6 +358,20 @@ export class GameEngineService {
         throw new Error('Room is full');
       }
 
+      const isPvP = !room.gameMode.endsWith('_VS_AI');
+
+      // For PvP: check balance before joining
+      if (isPvP) {
+        const user = await prismaClient.user.findUnique({
+          where: { address: playerAddress },
+          select: { predictionBalance: true },
+        });
+        const balance = BigInt(user?.predictionBalance || '0');
+        if (balance < PVP_ENTRY_BET_MIST) {
+          throw new Error('Insufficient prediction balance. Need at least 2 OCT to join a PvP room. Deposit on the Prediction page first.');
+        }
+      }
+
       // Get car stats
       const car = await this.getPlayerCarStats(carUid);
 
@@ -160,10 +389,26 @@ export class GameEngineService {
         });
       }
 
+      // For PvP: place auto-bet on self
+      if (isPvP) {
+        await this._placePvPEntryBet(room.id, roomUid, playerAddress);
+      }
+
       // Broadcast player joined event
       await broadcastService.broadcastPlayerJoined(roomUid, playerAddress);
 
-      logger.info(`Player ${playerAddress} joined room ${roomUid}`);
+      // For PvP: if room is now full (2 players), start betting period
+      if (isPvP) {
+        const updatedRoom = await prismaClient.room.findUnique({
+          where: { roomUid },
+          include: { players: true },
+        });
+        if (updatedRoom && updatedRoom.players.length >= updatedRoom.maxPlayers) {
+          await this.startBettingPeriod(roomUid);
+        }
+      }
+
+      logger.info(`Player ${playerAddress} joined room ${roomUid}${isPvP ? ' [PvP auto-bet placed]' : ''}`);
       return { roomPlayer, carStats: car };
     } catch (error) {
       logger.error(`Failed to join room: ${error}`);
@@ -173,9 +418,10 @@ export class GameEngineService {
 
   /**
    * Mark player as ready
+   * PvP rooms: rejected (auto-start after betting period)
+   * AI rooms: keep existing behavior
    */
   public async markPlayerReady(roomUid: string, playerAddress: string): Promise<void> {
-    // Mark player as approved (since isReady doesn't exist in schema)
     const room = await prismaClient.room.findUnique({
       where: { roomUid: roomUid },
       include: { players: true },
@@ -183,6 +429,11 @@ export class GameEngineService {
 
     if (!room) {
       throw new Error('Room not found');
+    }
+
+    // PvP rooms auto-start after betting period — no manual ready
+    if (!room.gameMode.endsWith('_VS_AI')) {
+      throw new Error('PvP games auto-start after the betting period. No manual ready required.');
     }
 
     // Find the room player
@@ -205,21 +456,8 @@ export class GameEngineService {
     // Broadcast lobby update to all players
     await broadcastService.broadcastLobbyUpdate(roomUid);
 
-    // If AI room (gameMode ends with _VS_AI), start immediately when player is ready
-    if (room.gameMode.endsWith('_VS_AI')) {
-      await this.startCountdown(roomUid);
-      return;
-    }
-
-    // Check if all players are approved
-    const updatedRoom = await prismaClient.room.findUnique({
-      where: { roomUid: roomUid },
-      include: { players: true },
-    });
-
-    if (updatedRoom && updatedRoom.players.every((p) => p.isApproved) && updatedRoom.players.length === updatedRoom.maxPlayers) {
-      await this.startCountdown(roomUid);
-    }
+    // AI room: start immediately when player is ready
+    await this.startCountdown(roomUid);
   }
 
   /**
@@ -267,14 +505,8 @@ export class GameEngineService {
         data: { status: 'RACING' },
       });
 
-      // Auto-create a prediction pool for PvP races only (skip AI games)
-      if (!room.gameMode.endsWith('_VS_AI')) {
-        prismaClient.predictionPool.upsert({
-          where: { roomUid: roomUid },
-          create: { roomId: room.id, roomUid: roomUid },
-          update: {},
-        }).catch((err: any) => logger.warn(`Prediction pool upsert failed: ${err.message}`));
-      }
+      // PvP prediction pool is already created during createRoom/joinRoom
+      // No need to create it here
 
       // Initialize player states
       const playerStates: PlayerState[] = await Promise.all(
@@ -414,7 +646,7 @@ export class GameEngineService {
 
       // Save updated state to memory (always) and Redis (best-effort)
       activeGame.state = updatedState;
-      cache.set(`game:room:${roomId}:state`, updatedState, 3600).catch(() => {});
+      cache.set(`game:room:${roomId}:state`, updatedState, 3600).catch(() => { });
 
       // Broadcast game state to all players (60 FPS)
       await broadcastService.broadcastGameState(roomId, updatedState);
@@ -535,11 +767,89 @@ export class GameEngineService {
           },
         });
 
-        // Settle prediction pool (PvP only, fire-and-forget)
-        prismaClient.predictionPool.updateMany({
-          where: { roomUid: roomId, isSettled: false },
-          data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
-        }).catch((err: any) => logger.warn(`Prediction settle failed: ${err.message}`));
+        // Settle prediction pool with 5% platform fee
+        try {
+          const pool = await prismaClient.predictionPool.findUnique({
+            where: { roomUid: roomId },
+            include: { bets: true },
+          });
+
+          if (pool && !pool.isSettled) {
+            const totalPool = BigInt(pool.totalPool);
+            const platformFee = (totalPool * BigInt(PLATFORM_FEE_PERCENT)) / 100n;
+            const winnerPool = totalPool - platformFee;
+
+            // Calculate total bet on the winner
+            const winnerBetsTotal = pool.bets
+              .filter(b => b.predictedWinner === winner.playerId)
+              .reduce((sum, b) => sum + BigInt(b.amount), 0n);
+
+            // Credit each winning bettor proportionally
+            if (winnerBetsTotal > 0n) {
+              const creditOps = [];
+              for (const bet of pool.bets) {
+                if (bet.predictedWinner === winner.playerId) {
+                  const betAmount = BigInt(bet.amount);
+                  const payout = (betAmount * winnerPool) / winnerBetsTotal;
+                  // Credit payout to bettor's predictionBalance
+                  const betUser = await prismaClient.user.findUnique({
+                    where: { address: bet.bettor },
+                    select: { predictionBalance: true },
+                  });
+                  const currentBal = BigInt(betUser?.predictionBalance || '0');
+                  creditOps.push(
+                    prismaClient.user.update({
+                      where: { address: bet.bettor },
+                      data: { predictionBalance: (currentBal + payout).toString() },
+                    })
+                  );
+                  creditOps.push(
+                    prismaClient.bet.update({
+                      where: { id: bet.id },
+                      data: { payout: payout.toString(), hasClaimed: true, claimedAt: new Date() },
+                    })
+                  );
+                }
+              }
+
+              await prismaClient.$transaction([
+                ...creditOps,
+                prismaClient.predictionPool.update({
+                  where: { id: pool.id },
+                  data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
+                }),
+              ]);
+
+              logger.info(`🏆 Pool settled: ${Number(winnerPool) / 1e9} OCT to winners, ${Number(platformFee) / 1e9} OCT platform fee`);
+            } else {
+              // No one bet on the winner — refund all bets
+              const refundOps = [];
+              for (const bet of pool.bets) {
+                const betUser = await prismaClient.user.findUnique({
+                  where: { address: bet.bettor },
+                  select: { predictionBalance: true },
+                });
+                const currentBal = BigInt(betUser?.predictionBalance || '0');
+                refundOps.push(
+                  prismaClient.user.update({
+                    where: { address: bet.bettor },
+                    data: { predictionBalance: (currentBal + BigInt(bet.amount)).toString() },
+                  })
+                );
+              }
+              await prismaClient.$transaction([
+                ...refundOps,
+                prismaClient.predictionPool.update({
+                  where: { id: pool.id },
+                  data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
+                }),
+              ]);
+              logger.info(`🏆 No bets on winner — all bets refunded`);
+            }
+          }
+        } catch (err: any) {
+          logger.warn(`Prediction settle failed: ${err.message}`);
+        }
       } else {
         logger.info(`🤖 AI game ${roomId} — skipping DB race save & blockchain validation`);
       }

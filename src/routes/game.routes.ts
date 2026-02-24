@@ -187,14 +187,14 @@ router.get(
 
 /**
  * GET /api/game/rooms/live
- * Get currently racing rooms (for spectators)
+ * Get active rooms: WAITING (joinable), STARTED/RACING (watchable)
  */
 router.get(
   '/rooms/live',
   asyncHandler(async (req, res: Response) => {
     const rooms = await prismaClient.room.findMany({
       where: {
-        status: { in: ['RACING', 'STARTED'] },
+        status: { in: ['WAITING', 'BETTING', 'STARTED', 'RACING'] },
         gameMode: { not: { endsWith: '_VS_AI' } },
       },
       include: {
@@ -352,6 +352,26 @@ router.post(
     res.json({
       success: true,
       message: 'Game stopped',
+    });
+  })
+);
+
+/**
+ * POST /api/game/room/:roomUid/cancel
+ * Cancel a room (WAITING or BETTING) — refunds all bets
+ */
+router.post(
+  '/room/:roomUid/cancel',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw new AppError('Authentication required', 401);
+
+    const { roomUid } = req.params;
+    await gameEngineService.cancelRoom(roomUid, req.user.address);
+
+    res.json({
+      success: true,
+      message: 'Room cancelled and all bets refunded',
     });
   })
 );

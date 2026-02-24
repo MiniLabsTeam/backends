@@ -127,6 +127,20 @@ export class ConnectionManager {
       }
     });
 
+    // Room cancel (creator only)
+    socket.on('ROOM_CANCEL', async (data, callback) => {
+      try {
+        const { roomUid } = data;
+        const { gameEngineService } = await import('../services/game/GameEngineService');
+        await gameEngineService.cancelRoom(roomUid, userId);
+        callback?.({ success: true });
+      } catch (error: any) {
+        logger.error(`Error in ROOM_CANCEL: ${error.message}`);
+        callback?.({ success: false, message: error.message });
+        socket.emit('ERROR', { message: error.message });
+      }
+    });
+
     // Spectator join room (watch-only, no player record)
     socket.on('SPECTATE_JOIN', async (data, callback) => {
       try {

@@ -15,6 +15,7 @@ model User {
   email             String?  @unique
   nonce             String   @default(uuid())
   tokenBalance      Int      @default(0)
+  predictionBalance String   @default("0") // OCT balance deposited for prediction (in MIST)
   lastLogin         DateTime @default(now())
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -29,6 +30,7 @@ model User {
   claims            PhysicalClaim[]
   marketListings    MarketListing[]
   gachaHistory      GachaHistory[]
+  predictionDeposits PredictionDeposit[]
 
   @@index([address])
   @@map("users")
@@ -151,6 +153,7 @@ model Room {
   updatedAt         DateTime @updatedAt
   startedAt         DateTime?
   finishedAt        DateTime?
+  bettingEndsAt     DateTime?
 
   // Relations
   players           RoomPlayer[]
@@ -288,6 +291,23 @@ model Bet {
   @@index([poolId])
   @@index([bettor])
   @@map("bets")
+}
+
+// Prediction Deposits (track on-chain deposits to prevent double-credit)
+model PredictionDeposit {
+  id                String   @id @default(uuid())
+  txDigest          String   @unique // On-chain transaction digest
+  depositor         String
+  amount            String   // MIST as string
+  type              String   // DEPOSIT or WITHDRAW
+  createdAt         DateTime @default(now())
+
+  // Relations
+  user              User     @relation(fields: [depositor], references: [address])
+
+  @@index([depositor])
+  @@index([txDigest])
+  @@map("prediction_deposits")
 }
 
 // Gacha History

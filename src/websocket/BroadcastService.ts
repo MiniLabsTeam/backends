@@ -171,6 +171,60 @@ export class BroadcastService {
   }
 
   /**
+   * Broadcast betting period start
+   */
+  public async broadcastBettingStart(roomUid: string, data: {
+    bettingEndsAt: string;
+    pool: any;
+  }): Promise<void> {
+    try {
+      const io = this.getIO();
+      io.to(roomUid).emit('BETTING_START', {
+        roomUid,
+        bettingEndsAt: data.bettingEndsAt,
+        pool: data.pool,
+        timestamp: Date.now(),
+      });
+      logger.info(`🎰 Broadcasted BETTING_START for room ${roomUid}`);
+    } catch (error) {
+      logger.error(`Error broadcasting betting start for room ${roomUid}:`, error);
+    }
+  }
+
+  /**
+   * Broadcast betting countdown (every second)
+   */
+  public async broadcastBettingCountdown(roomUid: string, secondsLeft: number): Promise<void> {
+    try {
+      const io = this.getIO();
+      io.to(roomUid).emit('BETTING_COUNTDOWN', {
+        roomUid,
+        secondsLeft,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      logger.error(`Error broadcasting betting countdown for room ${roomUid}:`, error);
+    }
+  }
+
+  /**
+   * Broadcast room cancelled event
+   */
+  public async broadcastRoomCancelled(roomUid: string, reason?: string): Promise<void> {
+    try {
+      const io = this.getIO();
+      io.to(roomUid).emit('ROOM_CANCELLED', {
+        roomUid,
+        reason: reason || 'Room cancelled by creator',
+        timestamp: Date.now(),
+      });
+      logger.info(`❌ Broadcasted ROOM_CANCELLED for room ${roomUid}`);
+    } catch (error) {
+      logger.error(`Error broadcasting room cancelled for room ${roomUid}:`, error);
+    }
+  }
+
+  /**
    * Get number of sockets in a room
    */
   public async getRoomSize(roomUid: string): Promise<number> {
