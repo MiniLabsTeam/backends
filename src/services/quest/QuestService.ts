@@ -98,12 +98,12 @@ export class QuestService {
           description: t.description,
           requirement: JSON.stringify({ type: t.requirementType, count: t.requirementCount }),
           reward: JSON.stringify({ tokens: t.rewardTokens }),
-          questType: 'DAILY',
+          type: 'DAILY',
           isActive: true,
           startDate: start,
           endDate: end,
         },
-        update: { isActive: true },
+        update: { isActive: true, type: 'DAILY' },
       });
     }
   }
@@ -123,12 +123,12 @@ export class QuestService {
           description: t.description,
           requirement: JSON.stringify({ type: t.requirementType, count: t.requirementCount }),
           reward: JSON.stringify({ tokens: t.rewardTokens }),
-          questType: 'WEEKLY',
+          type: 'WEEKLY',
           isActive: true,
           startDate: start,
           endDate: end,
         },
-        update: { isActive: true },
+        update: { isActive: true, type: 'WEEKLY' },
       });
     }
   }
