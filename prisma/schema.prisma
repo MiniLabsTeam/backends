@@ -31,6 +31,7 @@ model User {
   marketListings    MarketListing[]
   gachaHistory      GachaHistory[]
   predictionDeposits PredictionDeposit[]
+  endlessRaceScores EndlessRaceScore[]
 
   @@index([address])
   @@map("users")
@@ -422,6 +423,29 @@ model ClaimedPart {
 
   @@index([claimId])
   @@map("claimed_parts")
+}
+
+// Endless Race 3D Scores
+model EndlessRaceScore {
+  id                String   @id @default(uuid())
+  playerAddress     String
+  carUid            String?
+  carName           String?
+  score             Int
+  distance          Int      // meters
+  maxSpeed          Int      // km/h
+  gameTime          Float    // seconds
+  obstaclesDodged   Int      @default(0)
+
+  createdAt         DateTime @default(now())
+
+  // Relations
+  user              User     @relation(fields: [playerAddress], references: [address])
+
+  @@index([playerAddress])
+  @@index([score])
+  @@index([distance])
+  @@map("endless_race_scores")
 }
 
 // Used Nonces (Anti-Replay Protection)

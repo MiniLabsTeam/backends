@@ -413,4 +413,142 @@ router.post(
   })
 );
 
+// ─── Endless Race 3D Score Endpoints ─────────────────────────────────────────
+
+/**
+ * POST /api/game/endless/score
+ * Submit a score from 3D endless race
+ */
+router.post(
+  '/endless/score',
+  authenticate,
+  validate(
+    Joi.object({
+      carUid: Joi.string().allow('', null).optional(),
+      carName: Joi.string().allow('', null).optional(),
+      score: Joi.number().integer().min(0).required(),
+      distance: Joi.number().integer().min(0).required(),
+      maxSpeed: Joi.number().integer().min(0).required(),
+      gameTime: Joi.number().min(0).required(),
+      obstaclesDodged: Joi.number().integer().min(0).default(0),
+    })
+  ),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw new AppError('Authentication required', 401);
+
+    const { carUid, carName, score, distance, maxSpeed, gameTime, obstaclesDodged } = req.body;
+
+    const entry = await prismaClient.endlessRaceScore.create({
+      data: {
+        playerAddress: req.user.address,
+        carUid: carUid || null,
+        carName: carName || null,
+        score,
+        distance,
+        maxSpeed,
+        gameTime,
+        obstaclesDodged,
+      },
+    });
+
+    // Get player's rank for this score
+    const rank = await prismaClient.endlessRaceScore.count({
+      where: { score: { gt: score } },
+    });
+
+    // Get player's personal best
+    const personalBest = await prismaClient.endlessRaceScore.findFirst({
+      where: { playerAddress: req.user.address },
+      orderBy: { score: 'desc' },
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: entry.id,
+        score: entry.score,
+        rank: rank + 1,
+        isPersonalBest: personalBest?.id === entry.id,
+        personalBest: personalBest?.score || score,
+      },
+    });
+  })
+);
+
+/**
+ * GET /api/game/endless/leaderboard
+ * Get top scores leaderboard
+ */
+router.get(
+  '/endless/leaderboard',
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+
+    const scores = await prismaClient.endlessRaceScore.findMany({
+      orderBy: { score: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        playerAddress: true,
+        carName: true,
+        score: true,
+        distance: true,
+        maxSpeed: true,
+        gameTime: true,
+        obstaclesDodged: true,
+        createdAt: true,
+        user: { select: { username: true } },
+      },
+    });
+
+    res.json({
+      success: true,
+      data: scores.map((s: any, i: number) => ({
+        rank: i + 1,
+        playerAddress: s.playerAddress,
+        username: s.user?.username || null,
+        carName: s.carName,
+        score: s.score,
+        distance: s.distance,
+        maxSpeed: s.maxSpeed,
+        gameTime: Math.round(s.gameTime),
+        obstaclesDodged: s.obstaclesDodged,
+        createdAt: s.createdAt,
+      })),
+    });
+  })
+);
+
+/**
+ * GET /api/game/endless/my-scores
+ * Get current player's scores
+ */
+router.get(
+  '/endless/my-scores',
+  authenticate,
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) throw new AppError('Authentication required', 401);
+
+    const scores = await prismaClient.endlessRaceScore.findMany({
+      where: { playerAddress: req.user.address },
+      orderBy: { score: 'desc' },
+      take: 10,
+    });
+
+    const totalGames = await prismaClient.endlessRaceScore.count({
+      where: { playerAddress: req.user.address },
+    });
+
+    res.json({
+      success: true,
+      data: {
+        scores,
+        totalGames,
+        bestScore: scores[0]?.score || 0,
+        bestDistance: scores[0]?.distance || 0,
+      },
+    });
+  })
+);
+
 export default router;
