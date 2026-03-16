@@ -18,8 +18,8 @@ import logger from '../../config/logger';
 
 const GAME_CONFIG = {
   maxDuration: 300000, // 5 minutes max
-  trackWidth: 15, // 3 lanes x 5 units
-  playerCollisionSize: { x: 2, y: 1, z: 2 }, // Player bounding box
+  trackWidth: 18, // 4 lanes (positions: -4.5, -1.5, 1.5, 4.5)
+  playerCollisionSize: { x: 1.5, y: 1, z: 6 }, // Player bounding box — z=6 prevents tunneling at high speed
   powerUpCollisionSize: { x: 1, y: 1, z: 1 }, // Power-up collection radius
   eliminationPenalty: -100, // Z position when eliminated
 };
@@ -47,11 +47,11 @@ export class EndlessRaceEngine {
       gameMode: 'ENDLESS_RACE',
       players: players.map((p) => ({
         ...p,
-        position: { x: 0, y: 0, z: 0 },
+        position: { x: -1.5, y: 0, z: 0 },
         velocity: { x: 0, y: 0, z: 0 },
         rotation: 0,
         speed: 0,
-        lane: 1, // Start in middle lane (0=left, 1=middle, 2=right)
+        lane: 1, // Start in lane 1 (0=-4.5, 1=-1.5, 2=1.5, 3=4.5)
         checkpoints: 0,
         isFinished: false,
       })),
@@ -119,14 +119,14 @@ export class EndlessRaceEngine {
     if (!player || player.isFinished) return;
 
     const currentLane = player.lane ?? 1;
-    const LANE_WIDTH = 5;
+    const LANE_POSITIONS = [-4.5, -1.5, 1.5, 4.5]; // 4 lanes matching endless 3D
 
     if (input.action === 'TURN_LEFT' && currentLane > 0) {
       player.lane = currentLane - 1;
-      player.position.x = (player.lane - 1) * LANE_WIDTH;
-    } else if (input.action === 'TURN_RIGHT' && currentLane < 2) {
+      player.position.x = LANE_POSITIONS[player.lane];
+    } else if (input.action === 'TURN_RIGHT' && currentLane < 3) {
       player.lane = currentLane + 1;
-      player.position.x = (player.lane - 1) * LANE_WIDTH;
+      player.position.x = LANE_POSITIONS[player.lane];
     }
   }
 

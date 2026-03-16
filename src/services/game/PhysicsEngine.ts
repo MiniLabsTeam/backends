@@ -123,11 +123,10 @@ export class PhysicsEngine {
     pos2: Vector3,
     size2: Vector3
   ): boolean {
+    // Center-based AABB: positions are center points, not corner points
     return (
-      pos1.x < pos2.x + size2.x &&
-      pos1.x + size1.x > pos2.x &&
-      pos1.z < pos2.z + size2.z &&
-      pos1.z + size1.z > pos2.z
+      Math.abs(pos1.x - pos2.x) < (size1.x + size2.x) / 2 &&
+      Math.abs(pos1.z - pos2.z) < (size1.z + size2.z) / 2
     );
   }
 

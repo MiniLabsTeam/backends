@@ -15,17 +15,18 @@ interface ObstacleType {
 }
 
 const OBSTACLE_TYPES: Record<string, ObstacleType> = {
-  BARRIER: { damage: 'ELIMINATE', size: { x: 2, z: 1 }, probability: 0.3 },
-  HAZARD: { damage: 'SLOW_50', size: { x: 1, z: 1 }, probability: 0.4 },
-  SLOW_ZONE: { damage: 'SLOW_30', size: { x: 3, z: 2 }, probability: 0.3 },
+  BARRIER: { damage: 'ELIMINATE', size: { x: 2, z: 1 }, probability: 0.4 },
+  HAZARD: { damage: 'ELIMINATE', size: { x: 1, z: 1 }, probability: 0.4 },
+  SLOW_ZONE: { damage: 'SLOW_30', size: { x: 3, z: 2 }, probability: 0.2 },
 };
+
+const LANE_POSITIONS = [-4.5, -1.5, 1.5, 4.5]; // 4 lanes matching endless 3D
 
 const SPAWN_CONFIG = {
   interval: 2000, // ms between spawns
   minDistance: 50, // min distance from furthest player
   maxActive: 20, // max obstacles on track
-  laneWidth: 5, // width of each lane
-  laneCount: 3, // number of lanes
+  laneCount: 4, // number of lanes
 };
 
 export class ObstacleManager {
@@ -57,7 +58,7 @@ export class ObstacleManager {
 
     // Random lane
     const lane = Math.floor(Math.random() * SPAWN_CONFIG.laneCount);
-    const laneX = (lane - 1) * SPAWN_CONFIG.laneWidth; // Center lane at x=0
+    const laneX = LANE_POSITIONS[lane];
 
     const obstacle: Obstacle = {
       id: uuidv4(),
@@ -144,7 +145,7 @@ export class ObstacleManager {
         const gapLane = Math.floor(Math.random() * SPAWN_CONFIG.laneCount);
         for (let lane = 0; lane < SPAWN_CONFIG.laneCount; lane++) {
           if (lane !== gapLane) {
-            const laneX = (lane - 1) * SPAWN_CONFIG.laneWidth;
+            const laneX = LANE_POSITIONS[lane];
             obstacles.push({
               id: uuidv4(),
               position: { x: laneX, y: 0, z: spawnZ },
@@ -157,9 +158,9 @@ export class ObstacleManager {
 
       case 'ZIGZAG':
         // Spawn obstacles in alternating lanes
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 4; i++) {
           const lane = i % SPAWN_CONFIG.laneCount;
-          const laneX = (lane - 1) * SPAWN_CONFIG.laneWidth;
+          const laneX = LANE_POSITIONS[lane];
           obstacles.push({
             id: uuidv4(),
             position: { x: laneX, y: 0, z: spawnZ + i * 10 },
@@ -175,7 +176,7 @@ export class ObstacleManager {
         const count = 1 + Math.floor(Math.random() * 2);
         for (let i = 0; i < count; i++) {
           const lane = Math.floor(Math.random() * SPAWN_CONFIG.laneCount);
-          const laneX = (lane - 1) * SPAWN_CONFIG.laneWidth;
+          const laneX = LANE_POSITIONS[lane];
           obstacles.push({
             id: uuidv4(),
             position: { x: laneX, y: 0, z: spawnZ + i * 5 },
