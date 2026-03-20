@@ -18,8 +18,32 @@ interface SocketMetadata {
   connectedAt: number;
 }
 
+interface EndlessSession {
+  sessionId: string;
+  playerAddress: string;
+  username: string;
+  socketId: string;
+  startedAt: number;
+  lastState: any;
+}
+
 export class ConnectionManager {
   private io: SocketServer;
+
+  // Active endless race live sessions (static = accessible from routes)
+  public static readonly endlessSessions: Map<string, EndlessSession> = new Map();
+
+  public static getActiveSessions(): any[] {
+    return Array.from(ConnectionManager.endlessSessions.values()).map(s => ({
+      sessionId: s.sessionId,
+      playerAddress: s.playerAddress,
+      username: s.username,
+      startedAt: s.startedAt,
+      score: s.lastState?.score || 0,
+      distance: s.lastState?.distance || 0,
+      speed: Math.round((s.lastState?.speed || 0) * 3.6),
+    }));
+  }
 
   // roomId -> Set<socketId>
   private roomConnections: Map<string, Set<string>> = new Map();
@@ -169,6 +193,62 @@ export class ConnectionManager {
       }
     });
 
+    // ── Endless Race Live Session ──────────────────────────────────────────
+
+    socket.on('ENDLESS_START', (_data: any, callback?: Function) => {
+      const sessionId = `endless_${Date.now()}_${userId.slice(-6)}`;
+      ConnectionManager.endlessSessions.set(sessionId, {
+        sessionId,
+        playerAddress: userId,
+        username: (socket.data.user as any)?.username || userId.slice(0, 8),
+        socketId: socket.id,
+        startedAt: Date.now(),
+        lastState: null,
+      });
+      socket.join(`endless:${sessionId}`);
+      socket.data.endlessSessionId = sessionId;
+      this.io.to('endless-lobby').emit('ENDLESS_SESSION_STARTED', {
+        sessionId,
+        playerAddress: userId,
+        username: (socket.data.user as any)?.username || userId.slice(0, 8),
+        startedAt: Date.now(),
+      });
+      callback?.({ success: true, sessionId });
+      logger.info(`🎮 Endless live session started: ${sessionId} by ${userId}`);
+    });
+
+    socket.on('ENDLESS_STATE', (data: any) => {
+      const sessionId = socket.data.endlessSessionId as string | undefined;
+      if (!sessionId) return;
+      const session = ConnectionManager.endlessSessions.get(sessionId);
+      if (session) session.lastState = data;
+      socket.to(`endless:${sessionId}`).emit('ENDLESS_STATE', data);
+    });
+
+    socket.on('ENDLESS_END', () => {
+      const sessionId = socket.data.endlessSessionId as string | undefined;
+      if (!sessionId) return;
+      ConnectionManager.endlessSessions.delete(sessionId);
+      socket.data.endlessSessionId = null;
+      socket.leave(`endless:${sessionId}`);
+      this.io.to(`endless:${sessionId}`).emit('ENDLESS_SESSION_ENDED', { sessionId });
+      this.io.to('endless-lobby').emit('ENDLESS_SESSION_ENDED', { sessionId });
+      logger.info(`🏁 Endless live session ended: ${sessionId}`);
+    });
+
+    socket.on('ENDLESS_SPECTATE', (data: { sessionId: string }, callback?: Function) => {
+      const { sessionId } = data;
+      socket.join(`endless:${sessionId}`);
+      const session = ConnectionManager.endlessSessions.get(sessionId);
+      callback?.({ success: true, lastState: session?.lastState || null });
+      logger.info(`👁️ Spectator ${userId} watching endless session ${sessionId}`);
+    });
+
+    socket.on('ENDLESS_LOBBY_JOIN', (_data: any, callback?: Function) => {
+      socket.join('endless-lobby');
+      callback?.({ success: true });
+    });
+
     // Handle disconnect
     socket.on('disconnect', (reason) => {
       this.handleDisconnect(socket, reason);
@@ -210,6 +290,15 @@ export class ConnectionManager {
             playerId: userId,
             reason: 'timeout',
           });
+        }
+
+        // Clean up endless session if active
+        const endlessSessionId = socket.data.endlessSessionId as string | undefined;
+        if (endlessSessionId) {
+          ConnectionManager.endlessSessions.delete(endlessSessionId);
+          this.io.to(`endless:${endlessSessionId}`).emit('ENDLESS_SESSION_ENDED', { sessionId: endlessSessionId });
+          this.io.to('endless-lobby').emit('ENDLESS_SESSION_ENDED', { sessionId: endlessSessionId });
+          logger.info(`🏁 Endless session auto-ended (disconnect): ${endlessSessionId}`);
         }
 
         // Cleanup

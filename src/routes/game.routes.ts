@@ -476,6 +476,19 @@ router.post(
 );
 
 /**
+ * GET /api/game/endless/sessions
+ * List currently active live endless race sessions
+ */
+router.get(
+  '/endless/sessions',
+  asyncHandler(async (req, res: Response) => {
+    const { ConnectionManager } = await import('../websocket/ConnectionManager');
+    const sessions = ConnectionManager.getActiveSessions();
+    res.json({ success: true, data: sessions });
+  })
+);
+
+/**
  * GET /api/game/endless/leaderboard
  * Get top scores leaderboard
  */
