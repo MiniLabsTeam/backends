@@ -515,6 +515,7 @@ export class GameEngineService {
           return {
             playerId: rp.playerAddress,
             carUid: rp.carUid,
+            carBrand: carStats.brand,
             position: { x: 0, y: 0, z: 0 },
             velocity: { x: 0, y: 0, z: 0 },
             rotation: 0,
@@ -909,6 +910,7 @@ export class GameEngineService {
     acceleration: number;
     handling: number;
     drift: number;
+    brand: number;
   }> {
     const car = await prismaClient.car.findUnique({
       where: { uid: carUid },
@@ -931,6 +933,7 @@ export class GameEngineService {
       acceleration: car.baseAcceleration,
       handling: car.baseHandling,
       drift: car.baseDrift,
+      brand: car.brand ?? 0,
     };
 
     for (const equipped of car.equippedParts) {

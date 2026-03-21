@@ -27,6 +27,7 @@ export interface GameState {
 export interface PlayerState {
   playerId: string;
   carUid: string;
+  carBrand?: number; // 0=Lamborghini, 1=Ferrari, 2=Ford, 3=Chevrolet
   position: Vector3;
   velocity: Vector3;
   rotation: number;
