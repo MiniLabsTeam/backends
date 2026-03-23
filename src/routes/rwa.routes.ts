@@ -126,6 +126,7 @@ router.get(
     const claim = await prismaClient.physicalClaim.findUnique({
       where: { carUid },
       select: {
+        claimant: true,
         carUid: true,
         status: true,
         trackingNumber: true,
@@ -200,6 +201,121 @@ router.put(
 );
 
 /**
+ * POST /api/rwa/claim/:carUid
+ * Submit a physical RWA claim for a car + matching brand spare parts
+ */
+router.post(
+  '/claim/:carUid',
+  authenticate,
+  validate(
+    Joi.object({
+      shippingAddress: Joi.object({
+        name: Joi.string().min(2).max(100).required(),
+        phone: Joi.string().min(5).max(30).required(),
+        street: Joi.string().min(5).max(200).required(),
+        city: Joi.string().min(2).max(100).required(),
+        postal: Joi.string().min(2).max(20).required(),
+        country: Joi.string().min(2).max(100).required(),
+      }).required(),
+    })
+  ),
+  asyncHandler(async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      throw new AppError('Authentication required', 401);
+    }
+
+    const { carUid } = req.params;
+    const { shippingAddress } = req.body;
+
+    // Find the car
+    const car = await prismaClient.car.findUnique({
+      where: { uid: carUid },
+    });
+
+    if (!car) {
+      throw new AppError('Car not found', 404);
+    }
+    if (car.owner !== req.user.address) {
+      throw new AppError('You do not own this car', 403);
+    }
+    if (car.isClaimed) {
+      throw new AppError('This car has already been claimed', 400);
+    }
+    if (car.isListed) {
+      throw new AppError('Cannot claim a car that is listed on the marketplace', 400);
+    }
+
+    // Check existing claim
+    const existingClaim = await prismaClient.physicalClaim.findUnique({
+      where: { carUid },
+    });
+    if (existingClaim) {
+      throw new AppError('A claim for this car already exists', 400);
+    }
+
+    // Find matching brand spare parts (one of each type: 0=Wheels,1=Engine,2=Body,3=Shocks)
+    const typeNames = ['Wheels', 'Engine', 'Body', 'Shocks'];
+    const selectedParts: any[] = [];
+
+    for (const partType of [0, 1, 2, 3]) {
+      const part = await prismaClient.sparePart.findFirst({
+        where: {
+          owner: req.user.address,
+          compatibleBrand: car.brand,
+          partType,
+          isClaimed: false,
+          isListed: false,
+          isEquipped: false,
+        },
+      });
+      if (!part) {
+        throw new AppError(
+          `Missing required part: ${typeNames[partType]} (compatible with car brand)`,
+          400
+        );
+      }
+      selectedParts.push(part);
+    }
+
+    // Serialize shipping address to JSON string
+    const shippingAddressStr = JSON.stringify(shippingAddress);
+
+    // Create claim + mark car and parts as claimed in a transaction
+    const claim = await prismaClient.$transaction(async (tx) => {
+      await tx.car.update({ where: { uid: carUid }, data: { isClaimed: true } });
+
+      for (const part of selectedParts) {
+        await tx.sparePart.update({ where: { uid: part.uid }, data: { isClaimed: true } });
+      }
+
+      const newClaim = await tx.physicalClaim.create({
+        data: {
+          claimant: req.user!.address,
+          carUid: car.uid,
+          carId: car.id,
+          shippingAddress: shippingAddressStr,
+          status: 'PENDING',
+        },
+      });
+
+      for (const part of selectedParts) {
+        await tx.claimedPart.create({
+          data: { claimId: newClaim.id, partUid: part.uid, partId: part.id },
+        });
+      }
+
+      return newClaim;
+    });
+
+    res.status(201).json({
+      success: true,
+      data: claim,
+      message: 'Physical claim submitted successfully',
+    });
+  })
+);
+
+/**
  * GET /api/rwa/eligible
  * Get user's eligible items for RWA claim
  */
@@ -243,25 +359,26 @@ router.get(
     }
 
     // Check which cars are eligible (have all 4 part types of same brand)
+    const TYPE_NAMES: Record<number, string> = { 0: 'Wheels', 1: 'Engine', 2: 'Body', 3: 'Shocks' };
     const eligibleCars = cars.map((car) => {
       const brandParts = partsByBrand[car.brand] || {};
-      const hasAllTypes =
-        brandParts[0] && // Wheels
-        brandParts[1] && // Engine
-        brandParts[2] && // Body
-        brandParts[3]; // Shocks
+      const partStatus = {
+        wheels: brandParts[0]?.[0] || null,
+        engine: brandParts[1]?.[0] || null,
+        body:   brandParts[2]?.[0] || null,
+        shocks: brandParts[3]?.[0] || null,
+      };
+      const missingParts = [0, 1, 2, 3]
+        .filter((t) => !brandParts[t])
+        .map((t) => TYPE_NAMES[t]);
+      const isEligible = missingParts.length === 0;
 
       return {
         car,
-        isEligible: !!hasAllTypes,
-        availableParts: hasAllTypes
-          ? {
-              wheels: brandParts[0][0],
-              engine: brandParts[1][0],
-              body: brandParts[2][0],
-              shocks: brandParts[3][0],
-            }
-          : null,
+        isEligible,
+        availableParts: isEligible ? partStatus : null,
+        partStatus,
+        missingParts,
       };
     });
 
