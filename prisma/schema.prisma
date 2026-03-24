@@ -68,7 +68,7 @@ model Car {
   // Relations
   user              User     @relation(fields: [owner], references: [address])
   equippedParts     EquippedPart[]
-  listing           MarketListing?
+  listings          MarketListing[]
   claim             PhysicalClaim?
 
   @@index([owner])
@@ -109,7 +109,7 @@ model SparePart {
   // Relations
   user              User     @relation(fields: [owner], references: [address])
   equippedOn        EquippedPart?
-  listing           MarketListing?
+  listings          MarketListing[]
   claimedIn         ClaimedPart[]
 
   @@index([owner])
@@ -221,21 +221,22 @@ model MarketListing {
   listingId         String   @unique
   seller            String
   nftType           String   // CAR, SPAREPART
-  nftUid            String   @unique
+  nftUid            String
   price             String   // BigInt as string
   expiry            String   // BigInt as string
   isActive          Boolean  @default(true)
   isSold            Boolean  @default(false)
 
   // Relations
-  carId             String?  @unique
-  sparePartId       String?  @unique
+  carId             String?
+  sparePartId       String?
   car               Car?     @relation(fields: [carId], references: [id])
   sparePart         SparePart? @relation(fields: [sparePartId], references: [id])
   sellerUser        User     @relation(fields: [seller], references: [address])
 
   // On-chain status
   txDigest          String?
+  onChainListingId  String?
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
