@@ -195,7 +195,7 @@ export class EventListener {
 
       logger.info(`✅ Subscribed to event type: ${eventType}`);
 
-      return unsubscribe;
+      return unsubscribe as unknown as () => Promise<void>;
     } catch (error) {
       logger.error(`Failed to subscribe to event type ${eventType}:`, error);
       throw error;

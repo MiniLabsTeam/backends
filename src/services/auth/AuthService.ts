@@ -50,7 +50,7 @@ export class AuthService {
       logger.info(`New user created: ${address}`);
     }
 
-    return user;
+    return { ...user, username: user.username ?? undefined, email: user.email ?? undefined };
   }
 
   /**
@@ -62,7 +62,7 @@ export class AuthService {
     const normalizedAddress = address.toLowerCase();
 
     // Get or create user
-    const user = await this.getOrCreateUser(normalizedAddress);
+    await this.getOrCreateUser(normalizedAddress);
 
     // Generate new nonce
     const nonce = generateNonce();
@@ -293,18 +293,22 @@ This request will not trigger a blockchain transaction or cost any gas fees.`;
    * Get user by ID
    */
   public async getUserById(userId: string): Promise<User | null> {
-    return await prismaClient.user.findUnique({
+    const user = await prismaClient.user.findUnique({
       where: { id: userId },
     });
+    if (!user) return null;
+    return { ...user, username: user.username ?? undefined, email: user.email ?? undefined };
   }
 
   /**
    * Get user by address
    */
   public async getUserByAddress(address: string): Promise<User | null> {
-    return await prismaClient.user.findUnique({
+    const user = await prismaClient.user.findUnique({
       where: { address: address.toLowerCase() },
     });
+    if (!user) return null;
+    return { ...user, username: user.username ?? undefined, email: user.email ?? undefined };
   }
 
   /**
@@ -317,10 +321,11 @@ This request will not trigger a blockchain transaction or cost any gas fees.`;
       email?: string;
     }
   ): Promise<User> {
-    return await prismaClient.user.update({
+    const user = await prismaClient.user.update({
       where: { id: userId },
       data,
     });
+    return { ...user, username: user.username ?? undefined, email: user.email ?? undefined };
   }
 
   /**

@@ -395,7 +395,7 @@ router.get(
  */
 router.get(
   '/stats',
-  asyncHandler(async (req, res: Response) => {
+  asyncHandler(async (_req, res: Response) => {
     const [totalClaims, pendingClaims, shippedClaims, deliveredClaims] =
       await Promise.all([
         prismaClient.physicalClaim.count(),

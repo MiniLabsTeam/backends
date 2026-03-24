@@ -19,7 +19,7 @@ const router = Router();
  */
 router.get(
   '/pools',
-  asyncHandler(async (req, res: Response) => {
+  asyncHandler(async (_req, res: Response) => {
     const pools = await prismaClient.predictionPool.findMany({
       where: {
         isSettled: false,

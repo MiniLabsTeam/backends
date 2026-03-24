@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { prismaClient } from '../config/database';
 import { authenticate, AuthRequest } from '../middleware/auth';
-import { validate, schemas } from '../middleware/validator';
+import { validate } from '../middleware/validator';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
 import Joi from 'joi';
 

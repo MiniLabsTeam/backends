@@ -134,8 +134,8 @@ export class GachaService {
     const seed = GachaRNG.generateSeed();
 
     // Verify commit hash matches (optional - for extra security)
-    const expectedHash = generateCommitHash(seed, playerAddress);
     // Note: In production, you might want to verify this matches commitHash
+    void generateCommitHash(seed, playerAddress);
 
     // Store seed in cache (expires in 10 minutes)
     const cacheKey = `gacha:commit:${playerAddress}:${commitHash}`;

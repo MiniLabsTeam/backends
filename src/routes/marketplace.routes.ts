@@ -1,10 +1,7 @@
 import { Router, Response } from 'express';
 import { prismaClient } from '../config/database';
 import { authenticate, AuthRequest, optionalAuthenticate } from '../middleware/auth';
-import { marketplaceLimiter } from '../middleware/rateLimit';
-import { validate } from '../middleware/validator';
 import { asyncHandler, AppError } from '../middleware/errorHandler';
-import Joi from 'joi';
 
 const router = Router();
 
@@ -199,26 +196,31 @@ router.get(
  */
 router.get(
   '/stats',
-  asyncHandler(async (req, res: Response) => {
-    const [totalListings, totalSold, avgPrice] = await Promise.all([
+  asyncHandler(async (_req, res: Response) => {
+    const [totalListings, totalSold, activeListings] = await Promise.all([
       prismaClient.marketListing.count({
         where: { isActive: true },
       }),
       prismaClient.marketListing.count({
         where: { isSold: true },
       }),
-      prismaClient.marketListing.aggregate({
+      prismaClient.marketListing.findMany({
         where: { isActive: true },
-        _avg: { price: true },
+        select: { price: true },
       }),
     ]);
+
+    // Calculate average price manually since price is stored as string
+    const avgPrice = activeListings.length > 0
+      ? (activeListings.reduce((sum, l) => sum + BigInt(l.price), BigInt(0)) / BigInt(activeListings.length)).toString()
+      : '0';
 
     res.json({
       success: true,
       data: {
         totalListings,
         totalSold,
-        averagePrice: avgPrice._avg.price || '0',
+        averagePrice: avgPrice,
       },
     });
   })

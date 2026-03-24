@@ -148,7 +148,7 @@ export class EventHandler {
   }
 
   // Car events
-  private static async handleCarMinted(event: SuiEvent, data: CarMintedEvent): Promise<void> {
+  private static async handleCarMinted(_event: SuiEvent, data: CarMintedEvent): Promise<void> {
     await this.ensureUser(data.owner);
 
     await prismaClient.car.create({
@@ -170,7 +170,7 @@ export class EventHandler {
   }
 
   // SparePart events
-  private static async handleSparePartMinted(event: SuiEvent, data: SparePartMintedEvent): Promise<void> {
+  private static async handleSparePartMinted(_event: SuiEvent, data: SparePartMintedEvent): Promise<void> {
     await this.ensureUser(data.owner);
 
     await prismaClient.sparePart.create({
@@ -192,7 +192,7 @@ export class EventHandler {
   }
 
   // Garage events
-  private static async handlePartEquipped(event: SuiEvent, data: PartEquippedEvent): Promise<void> {
+  private static async handlePartEquipped(_event: SuiEvent, data: PartEquippedEvent): Promise<void> {
     await prismaClient.equippedPart.create({
       data: {
         carUid: data.car_uid,
@@ -208,7 +208,7 @@ export class EventHandler {
     logger.info(`⚙️ Part equipped: ${data.part_uid} on car ${data.car_uid}`);
   }
 
-  private static async handlePartUnequipped(event: SuiEvent, data: PartUnequippedEvent): Promise<void> {
+  private static async handlePartUnequipped(_event: SuiEvent, data: PartUnequippedEvent): Promise<void> {
     await prismaClient.equippedPart.deleteMany({
       where: {
         carUid: data.car_uid,
@@ -254,7 +254,7 @@ export class EventHandler {
     logger.info(`🏁 Room created: ${data.room_uid} with ${data.players.length} players`);
   }
 
-  private static async handleRoomApproved(event: SuiEvent, data: RoomApprovedEvent): Promise<void> {
+  private static async handleRoomApproved(_event: SuiEvent, data: RoomApprovedEvent): Promise<void> {
     const room = await prismaClient.room.findUnique({
       where: { roomUid: data.room_uid },
     });
@@ -275,7 +275,7 @@ export class EventHandler {
     }
   }
 
-  private static async handleRoomStarted(event: SuiEvent, data: RoomStartedEvent): Promise<void> {
+  private static async handleRoomStarted(_event: SuiEvent, data: RoomStartedEvent): Promise<void> {
     await prismaClient.room.updateMany({
       where: { roomUid: data.room_uid },
       data: {
@@ -319,7 +319,7 @@ export class EventHandler {
   }
 
   // Gacha events
-  private static async handleGachaCommitted(event: SuiEvent, data: GachaCommittedEvent): Promise<void> {
+  private static async handleGachaCommitted(_event: SuiEvent, data: GachaCommittedEvent): Promise<void> {
     await this.ensureUser(data.player);
 
     await prismaClient.gachaHistory.create({
@@ -336,7 +336,7 @@ export class EventHandler {
     logger.info(`🎰 Gacha committed by ${data.player}, tier ${data.tier_id}`);
   }
 
-  private static async handleGachaResult(event: SuiEvent, data: GachaResultEvent): Promise<void> {
+  private static async handleGachaResult(_event: SuiEvent, data: GachaResultEvent): Promise<void> {
     await prismaClient.gachaHistory.updateMany({
       where: {
         player: data.player,
@@ -409,7 +409,7 @@ export class EventHandler {
     }
   }
 
-  private static async handleNFTSold(event: SuiEvent, data: NFTSoldEvent): Promise<void> {
+  private static async handleNFTSold(_event: SuiEvent, data: NFTSoldEvent): Promise<void> {
     await this.ensureUser(data.buyer);
 
     const listing = await prismaClient.marketListing.findUnique({
@@ -443,7 +443,7 @@ export class EventHandler {
     }
   }
 
-  private static async handleListingCancelled(event: SuiEvent, data: ListingCancelledEvent): Promise<void> {
+  private static async handleListingCancelled(_event: SuiEvent, data: ListingCancelledEvent): Promise<void> {
     const listing = await prismaClient.marketListing.findUnique({
       where: { listingId: data.listing_id },
     });
@@ -490,7 +490,7 @@ export class EventHandler {
     }
   }
 
-  private static async handleBetPlaced(event: SuiEvent, data: BetPlacedEvent): Promise<void> {
+  private static async handleBetPlaced(_event: SuiEvent, data: BetPlacedEvent): Promise<void> {
     await this.ensureUser(data.bettor);
 
     const pool = await prismaClient.predictionPool.findUnique({
@@ -518,7 +518,7 @@ export class EventHandler {
     }
   }
 
-  private static async handlePredictionSettled(event: SuiEvent, data: PredictionSettledEvent): Promise<void> {
+  private static async handlePredictionSettled(_event: SuiEvent, data: PredictionSettledEvent): Promise<void> {
     await prismaClient.predictionPool.updateMany({
       where: { roomUid: data.room_uid },
       data: {
@@ -532,7 +532,7 @@ export class EventHandler {
     logger.info(`✅ Prediction settled for room ${data.room_uid}, winner: ${data.actual_winner}`);
   }
 
-  private static async handlePayoutClaimed(event: SuiEvent, data: PayoutClaimedEvent): Promise<void> {
+  private static async handlePayoutClaimed(_event: SuiEvent, data: PayoutClaimedEvent): Promise<void> {
     const pool = await prismaClient.predictionPool.findUnique({
       where: { roomUid: data.room_uid },
     });

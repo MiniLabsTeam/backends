@@ -114,7 +114,7 @@ class Indexer {
   /**
    * Handle errors with retry logic
    */
-  private async handleError(error: any): Promise<void> {
+  private async handleError(_error: any): Promise<void> {
     this.retryCount++;
 
     if (this.retryCount >= this.maxRetries) {

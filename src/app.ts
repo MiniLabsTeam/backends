@@ -73,15 +73,6 @@ app.get('/', (_req: Request, res: Response) => {
 import apiRoutes from './routes';
 app.use('/api', apiRoutes);
 
-// TODO: Add more routes
-// app.use('/api/game', gameRoutes);
-// app.use('/api/gacha', gachaRoutes);
-// app.use('/api/marketplace', marketplaceRoutes);
-// app.use('/api/prediction', predictionRoutes);
-// app.use('/api/quest', questRoutes);
-// app.use('/api/inventory', inventoryRoutes);
-// app.use('/api/rwa', rwaRoutes);
-
 // 404 handler
 app.use(notFoundHandler);
 

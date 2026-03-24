@@ -20,7 +20,7 @@ const router = Router();
  */
 router.get(
   '/tiers',
-  asyncHandler(async (req, res: Response) => {
+  asyncHandler(async (_req, res: Response) => {
     const tiers = gachaService.getAllTiers();
 
     res.json({

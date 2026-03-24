@@ -191,7 +191,7 @@ router.get(
  */
 router.get(
   '/rooms/live',
-  asyncHandler(async (req, res: Response) => {
+  asyncHandler(async (_req, res: Response) => {
     const rooms = await prismaClient.room.findMany({
       where: {
         status: { in: ['WAITING', 'BETTING', 'STARTED', 'RACING'] },
@@ -451,6 +451,11 @@ router.post(
       },
     });
 
+    // Update quest progress for 3D endless race (fire-and-forget)
+    const { questService } = await import('../services/quest/QuestService');
+    questService.updateProgress(req.user.address, 'RACE_COMPLETE', 1);
+    if (distance > 0) questService.updateProgress(req.user.address, 'DISTANCE_COVERED', distance);
+
     // Get player's rank for this score
     const rank = await prismaClient.endlessRaceScore.count({
       where: { score: { gt: score } },
@@ -481,7 +486,7 @@ router.post(
  */
 router.get(
   '/endless/sessions',
-  asyncHandler(async (req, res: Response) => {
+  asyncHandler(async (_req, res: Response) => {
     const { ConnectionManager } = await import('../websocket/ConnectionManager');
     const sessions = ConnectionManager.getActiveSessions();
     res.json({ success: true, data: sessions });

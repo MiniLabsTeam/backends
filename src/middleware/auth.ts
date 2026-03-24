@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import type { SignOptions } from 'jsonwebtoken';
 import { env } from '../config/env';
 import { prismaClient } from '../config/database';
 
@@ -61,7 +62,11 @@ export const authenticate = async (
     }
 
     // Attach user to request
-    req.user = user;
+    req.user = {
+      id: user.id,
+      address: user.address,
+      username: user.username ?? undefined,
+    };
 
     next();
   } catch (error) {
@@ -91,7 +96,7 @@ export const authenticate = async (
 // Optional authentication (doesn't fail if no token)
 export const optionalAuthenticate = async (
   req: AuthRequest,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
@@ -118,7 +123,11 @@ export const optionalAuthenticate = async (
       });
 
       if (user) {
-        req.user = user;
+        req.user = {
+          id: user.id,
+          address: user.address,
+          username: user.username ?? undefined,
+        };
       }
     } catch (error) {
       // Invalid token, but continue without user
@@ -134,14 +143,14 @@ export const optionalAuthenticate = async (
 export const generateToken = (payload: JWTPayload): string => {
   return jwt.sign(payload, env.jwtSecret, {
     expiresIn: env.jwtExpiresIn,
-  });
+  } as SignOptions);
 };
 
 // Generate refresh token
 export const generateRefreshToken = (payload: JWTPayload): string => {
   return jwt.sign(payload, env.jwtRefreshSecret, {
     expiresIn: env.jwtRefreshExpiresIn,
-  });
+  } as SignOptions);
 };
 
 // Verify refresh token
