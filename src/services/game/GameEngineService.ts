@@ -726,8 +726,8 @@ export class GameEngineService {
           rank: p.rank || 0,
           playerId: p.playerId,
           distance: p.checkpoints || 0,
-          obstaclesHit: 0, // TODO: track this
-          powerUpsCollected: 0, // TODO: track this
+          obstaclesHit: p.obstaclesHit || 0,
+          powerUpsCollected: p.powerUpsCollected || 0,
           finalTime: p.finishTime || state.gameTime,
         }));
 

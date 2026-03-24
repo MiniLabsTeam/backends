@@ -54,6 +54,8 @@ export class EndlessRaceEngine {
         lane: 1, // Start in lane 1 (0=-4.5, 1=-1.5, 2=1.5, 3=4.5)
         checkpoints: 0,
         isFinished: false,
+        obstaclesHit: 0,
+        powerUpsCollected: 0,
       })),
       timestamp: Date.now(),
       gameTime: 0,
@@ -225,6 +227,8 @@ export class EndlessRaceEngine {
     obstacle: any,
     _state: EndlessRaceState
   ): void {
+    player.obstaclesHit = (player.obstaclesHit || 0) + 1;
+
     // Check if player has shield
     if (this.powerUpManager.hasShield(player.playerId)) {
       this.powerUpManager.removeShield(player.playerId);
@@ -267,6 +271,7 @@ export class EndlessRaceEngine {
     currentTime: number
   ): void {
     powerUp.collected = true;
+    player.powerUpsCollected = (player.powerUpsCollected || 0) + 1;
     this.powerUpManager.applyPowerUp(player, powerUp, state, currentTime);
     logger.info(`Player ${player.playerId} collected power-up ${powerUp.type}`);
   }

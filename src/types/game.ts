@@ -44,6 +44,8 @@ export interface PlayerState {
   finishTime?: number;
   isFinished: boolean;
   rank?: number;
+  obstaclesHit?: number;
+  powerUpsCollected?: number;
 }
 
 export interface Vector3 {

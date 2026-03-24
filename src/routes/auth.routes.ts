@@ -49,6 +49,10 @@ router.post(
 
     const result = await authService.verifyAndAuthenticate(address, signature, message);
 
+    // Update daily login quest progress (fire-and-forget)
+    const { questService } = await import('../services/quest/QuestService');
+    questService.updateProgress(address, 'LOGIN', 1);
+
     res.json({
       success: true,
       data: result,
@@ -247,6 +251,10 @@ if (process.env.NODE_ENV !== 'production') {
 
       // Generate test token without signature verification
       const token = await authService.generateTestToken(address);
+
+      // Update daily login quest progress (fire-and-forget)
+      const { questService } = await import('../services/quest/QuestService');
+      questService.updateProgress(address, 'LOGIN', 1);
 
       res.json({
         success: true,

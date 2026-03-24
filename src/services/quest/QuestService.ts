@@ -17,6 +17,7 @@ const DAILY_TEMPLATES: QuestTemplate[] = [
   { suffix: 'win',      name: 'Victory Lap',       description: 'Win 1 race today',              requirementType: 'RACE_WIN',         requirementCount: 1,  rewardTokens: 200 },
   { suffix: 'gacha',    name: 'Lucky Pull',        description: 'Do 1 gacha pull today',         requirementType: 'GACHA_PULL',       requirementCount: 1,  rewardTokens: 150 },
   { suffix: 'distance', name: 'Road Warrior',      description: 'Cover 500m in races today',     requirementType: 'DISTANCE_COVERED', requirementCount: 500, rewardTokens: 80 },
+  { suffix: 'login',    name: 'Daily Check-in',    description: 'Log in today',                  requirementType: 'LOGIN',            requirementCount: 1,   rewardTokens: 50  },
 ];
 
 const WEEKLY_TEMPLATES: QuestTemplate[] = [

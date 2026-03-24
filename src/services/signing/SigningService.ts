@@ -354,15 +354,24 @@ export class SigningService {
    * Validate signature from client (for verifying user signatures)
    */
   public async validateClientSignature(
-    _message: string,
-    _signature: string,
-    _expectedAddress: string
+    message: string,
+    signature: string,
+    expectedAddress: string
   ): Promise<boolean> {
-    // This would verify a signature made by the user's wallet
-    // Implementation depends on the wallet's signature scheme
-    // For now, this is a placeholder
-    logger.warn('Client signature validation not fully implemented');
-    return true; // TODO: Implement proper verification
+    try {
+      const messageBytes = encodeMessage(message);
+      const signatureBytes = hexToBytes(signature);
+      const publicKeyBytes = hexToBytes(expectedAddress);
+
+      const isValid = await verifySignature(messageBytes, signatureBytes, publicKeyBytes);
+      if (!isValid) {
+        logger.warn(`Client signature validation failed for ${expectedAddress}`);
+      }
+      return isValid;
+    } catch (error) {
+      logger.error(`Client signature validation error: ${error}`);
+      return false;
+    }
   }
 
   /**
