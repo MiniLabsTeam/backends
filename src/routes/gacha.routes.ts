@@ -237,6 +237,81 @@ router.post(
     // Update quest progress
     questService.updateProgress(req.user.address, 'GACHA_PULL', 1);
 
+    // Mint NFT on-chain via backend admin wallet
+    let txDigest: string | null = null;
+    try {
+      const { suiClient, keypair } = await import('../config/blockchain');
+      const PACKAGE_ID = env.packageId;
+      const CONFIG_ID = env.gachaConfigId;
+
+      if (PACKAGE_ID && CONFIG_ID) {
+        const tx = new TransactionBlock();
+        const adminAddress = keypair.getPublicKey().toSuiAddress();
+        const OCT_TYPE = '0x2::oct::OCT';
+        const gasCoins = await suiClient.getCoins({ owner: adminAddress, coinType: OCT_TYPE });
+        if (gasCoins.data.length === 0) throw new Error('Backend wallet has no OCT for gas');
+        tx.setSender(adminAddress);
+        tx.setGasBudget(10_000_000);
+        tx.setGasPayment(gasCoins.data.slice(0, 1).map((c: any) => ({
+          objectId: c.coinObjectId,
+          version: c.version,
+          digest: c.digest,
+        })));
+        const nameBytes = Array.from(new TextEncoder().encode(reveal.name));
+        const stats = reveal.stats;
+        // stat mapping: accel=acceleration, top_speed=speed, grip=handling, hp=drift
+        const accel = BigInt(stats.acceleration);
+        const topSpeed = BigInt(stats.speed);
+        const grip = BigInt(stats.handling);
+        const hp = BigInt(stats.drift);
+
+        if (reveal.isCar) {
+          tx.moveCall({
+            target: `${PACKAGE_ID}::car::admin_mint`,
+            arguments: [
+              tx.object(CONFIG_ID),
+              tx.pure(nameBytes),
+              tx.pure(reveal.brand),
+              tx.pure(reveal.rarity),
+              tx.pure(Number(accel)),
+              tx.pure(Number(topSpeed)),
+              tx.pure(Number(grip)),
+              tx.pure(Number(hp)),
+              tx.pure(reveal.slotLimit ?? 2),
+              tx.pure(req.user.address),
+            ],
+          });
+        } else {
+          tx.moveCall({
+            target: `${PACKAGE_ID}::sparepart::admin_mint`,
+            arguments: [
+              tx.object(CONFIG_ID),
+              tx.pure(nameBytes),
+              tx.pure(reveal.partType ?? 0),
+              tx.pure(reveal.rarity),
+              tx.pure(reveal.brand),
+              tx.pure(Number(accel)),
+              tx.pure(Number(topSpeed)),
+              tx.pure(Number(grip)),
+              tx.pure(Number(hp)),
+              tx.pure(req.user.address),
+            ],
+          });
+        }
+
+        const result = await suiClient.signAndExecuteTransactionBlock({
+          transactionBlock: tx,
+          signer: keypair,
+          options: { showEffects: true },
+        });
+        txDigest = result.digest;
+        logger.info(`[CoinGacha] Minted on-chain: ${txDigest} for ${req.user.address}`);
+      }
+    } catch (mintError) {
+      logger.error('[CoinGacha] On-chain mint failed:', mintError);
+      // Tetap lanjut — NFT sudah tersimpan di DB
+    }
+
     // Return result with new balance
     const updatedUser = await prismaClient.user.findUnique({ where: { address: req.user.address } });
 
@@ -244,6 +319,7 @@ router.post(
       success: true,
       data: {
         ...reveal,
+        txDigest,
         tokenCost: cost,
         newTokenBalance: (updatedUser as any)?.tokenBalance ?? 0,
       },
