@@ -1,5 +1,8 @@
 FROM node:18-alpine
 
+# Install OpenSSL for Prisma
+RUN apk add --no-cache openssl
+
 WORKDIR /app
 
 # Copy package files
@@ -22,5 +25,5 @@ RUN npm prune --omit=dev
 # Expose port
 EXPOSE 3000
 
-# Push schema then start
-CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/app.js"]
+# Start directly (schema already pushed to Neon)
+CMD ["node", "dist/app.js"]
