@@ -18,6 +18,9 @@ import { broadcastService } from './websocket/BroadcastService';
 // Create Express app
 const app: Express = express();
 
+// Trust proxy (required behind Railway/Vercel reverse proxy for rate limiting & IP detection)
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 

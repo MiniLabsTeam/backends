@@ -1,4 +1,9 @@
-import crypto from 'crypto';
+import crypto, { webcrypto } from 'crypto';
+
+// Node 18 doesn't expose crypto.subtle globally — @noble/ed25519 requires it
+if (!globalThis.crypto?.subtle) {
+  (globalThis as any).crypto = webcrypto;
+}
 
 // @noble/ed25519 is ESM-only — use dynamic import that survives TS CommonJS compilation
 let ed: any;
