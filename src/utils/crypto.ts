@@ -1,5 +1,8 @@
 import crypto from 'crypto';
-import * as ed from '@noble/ed25519';
+
+// @noble/ed25519 is ESM-only — use dynamic import to avoid ERR_REQUIRE_ESM
+let ed: typeof import('@noble/ed25519');
+const edReady = import('@noble/ed25519').then(m => { ed = m; });
 
 // Generate random nonce (hex string, 32 bytes - for non-contract use)
 export const generateNonce = (): string => {
@@ -34,6 +37,7 @@ export const verifySignature = async (
   publicKey: Uint8Array
 ): Promise<boolean> => {
   try {
+    await edReady;
     return await ed.verifyAsync(signature, message, publicKey);
   } catch (error) {
     return false;
@@ -45,6 +49,7 @@ export const signMessage = async (
   message: Uint8Array,
   privateKey: Uint8Array
 ): Promise<Uint8Array> => {
+  await edReady;
   return await ed.signAsync(message, privateKey);
 };
 

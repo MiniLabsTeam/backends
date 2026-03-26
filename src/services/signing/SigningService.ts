@@ -1,4 +1,6 @@
-import * as ed from '@noble/ed25519';
+// @noble/ed25519 is ESM-only — use dynamic import to avoid ERR_REQUIRE_ESM
+let ed: typeof import('@noble/ed25519');
+const edReady = import('@noble/ed25519').then(m => { ed = m; });
 // @ts-ignore - kept for potential future use
 import { getBackendKeypair } from '../../config/blockchain';
 import { env } from '../../config/env';
@@ -82,6 +84,7 @@ export class SigningService {
         : env.backendPrivateKey;
       const privateKeyBytes = Uint8Array.from(Buffer.from(rawHex, 'hex'));
 
+      await edReady;
       const signatureBytes = await ed.signAsync(messageBytes, privateKeyBytes);
 
       return {
