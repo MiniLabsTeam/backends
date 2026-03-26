@@ -1,6 +1,7 @@
-// @noble/ed25519 is ESM-only — use dynamic import to avoid ERR_REQUIRE_ESM
-let ed: typeof import('@noble/ed25519');
-const edReady = import('@noble/ed25519').then(m => { ed = m; });
+// @noble/ed25519 is ESM-only — use dynamic import that survives TS CommonJS compilation
+let ed: any;
+const importDynamic = new Function('modulePath', 'return import(modulePath)');
+const edReady = importDynamic('@noble/ed25519').then((m: any) => { ed = m; });
 // @ts-ignore - kept for potential future use
 import { getBackendKeypair } from '../../config/blockchain';
 import { env } from '../../config/env';
