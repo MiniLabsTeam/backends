@@ -6,10 +6,12 @@ let redisClient: Redis;
 
 // Create Redis Client
 const createRedisClient = (): Redis => {
+  const isProduction = process.env.NODE_ENV === 'production';
   const client = new Redis({
     host: env.redisHost,
     port: env.redisPort,
-    password: env.redisPassword,
+    password: env.redisPassword || undefined,
+    tls: isProduction ? {} : undefined, // Upstash requires TLS
     retryStrategy: (times: number) => {
       const delay = Math.min(times * 50, 2000);
       return delay;
