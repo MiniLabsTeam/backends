@@ -5,18 +5,22 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci --omit=dev
+# Install ALL dependencies (need devDeps for build)
+RUN npm ci
 
-# Copy prisma schema and generate client
+# Copy source and prisma
 COPY prisma ./prisma
-RUN npx prisma generate
+COPY src ./src
+COPY tsconfig.json ./
 
-# Copy compiled source
-COPY dist ./dist
+# Generate Prisma client and build TypeScript
+RUN npx prisma generate && npm run build
+
+# Remove devDependencies after build
+RUN npm prune --omit=dev
 
 # Expose port
 EXPOSE 3000
 
-# Run migrations then start
-CMD npx prisma migrate deploy && node dist/app.js
+# Push schema then start
+CMD ["sh", "-c", "npx prisma db push --skip-generate && node dist/app.js"]
