@@ -148,24 +148,23 @@ export class GameEngineService {
 
     const newBalance = balance - PVP_ENTRY_BET_MIST;
 
-    // Find or create prediction pool, always adding entry bet to totalPool
+    // Find or create prediction pool — entry fees go into racePrizePool (separate from bettor pool)
     const existingPool = await prismaClient.predictionPool.findUnique({ where: { roomUid } });
 
     let pool;
     if (existingPool) {
-      // Pool already exists (second player joining) — add entry bet to totalPool
-      const updatedTotal = BigInt(existingPool.totalPool) + PVP_ENTRY_BET_MIST;
+      const updatedRacePrize = BigInt(existingPool.racePrizePool) + PVP_ENTRY_BET_MIST;
       pool = await prismaClient.predictionPool.update({
         where: { roomUid },
-        data: { totalPool: updatedTotal.toString() },
+        data: { racePrizePool: updatedRacePrize.toString() },
       });
     } else {
-      // First player — create pool with initial entry bet
       pool = await prismaClient.predictionPool.create({
         data: {
           roomId,
           roomUid,
-          totalPool: PVP_ENTRY_BET_MIST.toString(),
+          racePrizePool: PVP_ENTRY_BET_MIST.toString(),
+          totalPool: '0',
         },
       });
     }
@@ -776,23 +775,90 @@ export class GameEngineService {
           });
 
           if (pool && !pool.isSettled) {
-            const totalPool = BigInt(pool.totalPool);
-            const platformFee = (totalPool * BigInt(PLATFORM_FEE_PERCENT)) / 100n;
-            const winnerPool = totalPool - platformFee;
+            const creditOps: any[] = [];
 
-            // Calculate total bet on the winner
-            const winnerBetsTotal = pool.bets
-              .filter(b => b.predictedWinner === winner.playerId)
-              .reduce((sum, b) => sum + BigInt(b.amount), 0n);
-
-            // Credit each winning bettor proportionally
-            if (winnerBetsTotal > 0n) {
-              const creditOps = [];
+            // ── POOL 1: Race Prize (entry fees from racers) ──
+            // Winner takes all race prize minus platform fee
+            const racePrizePool = BigInt(pool.racePrizePool);
+            if (racePrizePool > 0n) {
+              const raceFee = (racePrizePool * BigInt(PLATFORM_FEE_PERCENT)) / 100n;
+              const racePayout = racePrizePool - raceFee;
+              // Credit race prize to winner
+              const winnerUser = await prismaClient.user.findUnique({
+                where: { address: winner.playerId },
+                select: { predictionBalance: true },
+              });
+              const winnerBal = BigInt(winnerUser?.predictionBalance || '0');
+              creditOps.push(
+                prismaClient.user.update({
+                  where: { address: winner.playerId },
+                  data: { predictionBalance: (winnerBal + racePayout).toString() },
+                })
+              );
+              // Mark all race-entry bets (bettor === predictedWinner)
               for (const bet of pool.bets) {
-                if (bet.predictedWinner === winner.playerId) {
-                  const betAmount = BigInt(bet.amount);
-                  const payout = (betAmount * winnerPool) / winnerBetsTotal;
-                  // Credit payout to bettor's predictionBalance
+                if (bet.bettor === bet.predictedWinner) {
+                  const isWinner = bet.bettor === winner.playerId;
+                  creditOps.push(
+                    prismaClient.bet.update({
+                      where: { id: bet.id },
+                      data: {
+                        payout: isWinner ? racePayout.toString() : '0',
+                        hasClaimed: true,
+                        claimedAt: new Date(),
+                      },
+                    })
+                  );
+                }
+              }
+              logger.info(`🏆 Race prize: ${Number(racePayout) / 1e9} OCT → ${winner.playerId}, fee: ${Number(raceFee) / 1e9} OCT`);
+            }
+
+            // ── POOL 2: Prediction Pool (external bettors only) ──
+            const totalPool = BigInt(pool.totalPool);
+            if (totalPool > 0n) {
+              const predFee = (totalPool * BigInt(PLATFORM_FEE_PERCENT)) / 100n;
+              const predPayout = totalPool - predFee;
+              const predBets = pool.bets.filter(b => b.bettor !== b.predictedWinner);
+              const winningPredBets = predBets.filter(b => b.predictedWinner === winner.playerId);
+              const winningTotal = winningPredBets.reduce((s, b) => s + BigInt(b.amount), 0n);
+
+              if (winningTotal > 0n) {
+                for (const bet of predBets) {
+                  if (bet.predictedWinner === winner.playerId) {
+                    const betAmount = BigInt(bet.amount);
+                    const payout = (betAmount * predPayout) / winningTotal;
+                    const betUser = await prismaClient.user.findUnique({
+                      where: { address: bet.bettor },
+                      select: { predictionBalance: true },
+                    });
+                    const currentBal = BigInt(betUser?.predictionBalance || '0');
+                    creditOps.push(
+                      prismaClient.user.update({
+                        where: { address: bet.bettor },
+                        data: { predictionBalance: (currentBal + payout).toString() },
+                      })
+                    );
+                    creditOps.push(
+                      prismaClient.bet.update({
+                        where: { id: bet.id },
+                        data: { payout: payout.toString(), hasClaimed: true, claimedAt: new Date() },
+                      })
+                    );
+                  } else {
+                    // Losing prediction bets — mark as claimed with 0 payout
+                    creditOps.push(
+                      prismaClient.bet.update({
+                        where: { id: bet.id },
+                        data: { payout: '0', hasClaimed: true, claimedAt: new Date() },
+                      })
+                    );
+                  }
+                }
+                logger.info(`🏆 Prediction pool: ${Number(predPayout) / 1e9} OCT → ${winningPredBets.length} bettors, fee: ${Number(predFee) / 1e9} OCT`);
+              } else {
+                // No one predicted correctly — refund all prediction bets
+                for (const bet of predBets) {
                   const betUser = await prismaClient.user.findUnique({
                     where: { address: bet.bettor },
                     select: { predictionBalance: true },
@@ -801,52 +867,27 @@ export class GameEngineService {
                   creditOps.push(
                     prismaClient.user.update({
                       where: { address: bet.bettor },
-                      data: { predictionBalance: (currentBal + payout).toString() },
+                      data: { predictionBalance: (currentBal + BigInt(bet.amount)).toString() },
                     })
                   );
                   creditOps.push(
                     prismaClient.bet.update({
                       where: { id: bet.id },
-                      data: { payout: payout.toString(), hasClaimed: true, claimedAt: new Date() },
+                      data: { payout: bet.amount, hasClaimed: true, claimedAt: new Date() },
                     })
                   );
                 }
+                logger.info(`🏆 No correct predictions — all prediction bets refunded`);
               }
-
-              await prismaClient.$transaction([
-                ...creditOps,
-                prismaClient.predictionPool.update({
-                  where: { id: pool.id },
-                  data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
-                }),
-              ]);
-
-              logger.info(`🏆 Pool settled: ${Number(winnerPool) / 1e9} OCT to winners, ${Number(platformFee) / 1e9} OCT platform fee`);
-            } else {
-              // No one bet on the winner — refund all bets
-              const refundOps = [];
-              for (const bet of pool.bets) {
-                const betUser = await prismaClient.user.findUnique({
-                  where: { address: bet.bettor },
-                  select: { predictionBalance: true },
-                });
-                const currentBal = BigInt(betUser?.predictionBalance || '0');
-                refundOps.push(
-                  prismaClient.user.update({
-                    where: { address: bet.bettor },
-                    data: { predictionBalance: (currentBal + BigInt(bet.amount)).toString() },
-                  })
-                );
-              }
-              await prismaClient.$transaction([
-                ...refundOps,
-                prismaClient.predictionPool.update({
-                  where: { id: pool.id },
-                  data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
-                }),
-              ]);
-              logger.info(`🏆 No bets on winner — all bets refunded`);
             }
+
+            await prismaClient.$transaction([
+              ...creditOps,
+              prismaClient.predictionPool.update({
+                where: { id: pool.id },
+                data: { isSettled: true, actualWinner: winner.playerId, settledAt: new Date() },
+              }),
+            ]);
           }
         } catch (err: any) {
           logger.warn(`Prediction settle failed: ${err.message}`);

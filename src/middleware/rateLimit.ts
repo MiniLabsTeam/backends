@@ -120,10 +120,10 @@ export const gachaLimiter = rateLimit({
   store: new RedisStore('rl:gacha:') as any,
 });
 
-// Marketplace rate limiter (20 requests per minute)
+// Marketplace rate limiter (200 requests per minute)
 export const marketplaceLimiter = rateLimit({
   windowMs: env.rateLimitWindowMs,
-  max: 20,
+  max: 200,
   message: {
     success: false,
     error: 'Too many marketplace requests, please try again later.',

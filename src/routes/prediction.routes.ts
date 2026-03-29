@@ -88,10 +88,11 @@ router.get(
       throw new AppError('Prediction pool not found', 404);
     }
 
-    // Calculate odds for each player
+    // Only count external prediction bets for odds (exclude race-entry bets where bettor===predictedWinner)
+    const predictionBets = pool.bets.filter(b => b.bettor !== b.predictedWinner);
     const playerBets: Record<string, { amount: bigint; count: number }> = {};
 
-    for (const bet of pool.bets) {
+    for (const bet of predictionBets) {
       if (!playerBets[bet.predictedWinner]) {
         playerBets[bet.predictedWinner] = { amount: BigInt(0), count: 0 };
       }
@@ -114,6 +115,8 @@ router.get(
       success: true,
       data: {
         ...pool,
+        racePrizePoolOCT: Number(BigInt((pool as any).racePrizePool || '0')) / 1e9,
+        totalPoolOCT: Number(BigInt(pool.totalPool)) / 1e9,
         playerBets: Object.fromEntries(
           Object.entries(playerBets).map(([k, v]) => [
             k,
@@ -817,17 +820,33 @@ router.post(
       throw new AppError('This bet did not win', 400);
     }
 
-    // Calculate payout: proportional share of total pool minus 5% platform fee (in MIST)
-    const winnerBets = await prismaClient.bet.findMany({
-      where: { poolId: bet.poolId, predictedWinner: bet.pool.actualWinner! },
-      select: { amount: true },
-    });
-    const totalPool = BigInt(bet.pool.totalPool);
-    const platformFee = (totalPool * 5n) / 100n;
-    const winnerPool = totalPool - platformFee;
-    const winnerTotal = winnerBets.reduce((s, b) => s + BigInt(b.amount), 0n);
-    const betAmount = BigInt(bet.amount);
-    const payout = winnerTotal > 0n ? (betAmount * winnerPool) / winnerTotal : 0n;
+    // Distinguish race-entry bet (bettor === predictedWinner) vs prediction bet
+    const isRaceEntry = bet.bettor === bet.predictedWinner;
+    let payout: bigint;
+
+    if (isRaceEntry) {
+      // Race prize: winner takes all racePrizePool minus 5% fee
+      const racePrizePool = BigInt((bet.pool as any).racePrizePool || '0');
+      const fee = (racePrizePool * 5n) / 100n;
+      payout = racePrizePool - fee;
+    } else {
+      // Prediction: proportional share of totalPool (external bets) minus 5% fee
+      const winnerBets = await prismaClient.bet.findMany({
+        where: {
+          poolId: bet.poolId,
+          predictedWinner: bet.pool.actualWinner!,
+          NOT: { bettor: { equals: bet.pool.actualWinner! } }, // exclude race entries
+        },
+        select: { amount: true },
+      });
+      const totalPool = BigInt(bet.pool.totalPool);
+      const fee = (totalPool * 5n) / 100n;
+      const winnerPool = totalPool - fee;
+      const winnerTotal = winnerBets.reduce((s, b) => s + BigInt(b.amount), 0n);
+      const betAmount = BigInt(bet.amount);
+      payout = winnerTotal > 0n ? (betAmount * winnerPool) / winnerTotal : 0n;
+    }
+
     const payoutOCT = Number(payout) / (10 ** OCT_DECIMALS);
 
     // Credit payout to prediction balance

@@ -398,11 +398,12 @@ router.get(
     try {
       const txData = await suiClient.getTransactionBlock({
         digest,
-        options: { showEvents: true },
+        options: { showEvents: true, showObjectChanges: true },
       });
-      res.json({ success: true, events: txData.events || [] });
-    } catch {
-      res.json({ success: true, events: [] });
+      res.json({ success: true, events: txData.events || [], objectChanges: txData.objectChanges || [] });
+    } catch (err) {
+      console.error('[tx-events] error:', err);
+      res.json({ success: true, events: [], objectChanges: [] });
     }
   })
 );

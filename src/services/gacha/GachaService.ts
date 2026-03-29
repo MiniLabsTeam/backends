@@ -4,33 +4,129 @@ import { cache } from '../../config/redis';
 import { Rarity, Brand } from '../../config/blockchain';
 import { signingService } from '../signing/SigningService';
 
-// Car images mapped by brand (served from frontend /public)
-const CAR_IMAGES: Record<number, string[]> = {
-  [Brand.LAMBORGHINI]: [
-    '/assets/car_no_background/05-Lamborghini-Huracan-removebg-preview.png',
-    '/assets/car_no_background/02-Bugatti-Chiron-removebg-preview.png',
-    '/assets/car_no_background/03-Koenigsegg_Jesko-removebg-preview.png',
-  ],
-  [Brand.FERRARI]: [
-    '/assets/car_no_background/07-Ferrari-F8-Turbo-removebg-preview.png',
-    '/assets/car_no_background/08-Pagain-Huayra-removebg-preview.png',
-    '/assets/car_no_background/01-Porche-911-Turbo-removebg-preview.png',
-  ],
-  [Brand.FORD]: [
-    '/assets/car_no_background/04-BMW-M3-GTR-removebg-preview.png',
-    '/assets/car_no_background/06-Audi-RS-Superwagon-removebg-preview.png',
-    '/assets/car_no_background/13-Proche-911-removebg-preview.png',
-  ],
-  [Brand.CHEVROLET]: [
-    '/assets/car_no_background/14-McLAREN-720s-removebg-preview.png',
-    '/assets/car_no_background/11-Mercedes-AMG-GT-removebg-preview.png',
-    '/assets/car_no_background/09-Mercede-AMG-removebg-preview.png',
-  ],
+// Car 2D images mapped by model name keyword
+const CAR_IMAGE_BY_MODEL: Record<string, string> = {
+  // Lamborghini
+  'Revuelto':    '/assets/assetdcar2d/lamborghin/lamborghini_Revuelto.png',
+  'Temerario':   '/assets/assetdcar2d/lamborghin/lamborghini_Temerario.png',
+  'Aventador':   '/assets/assetdcar2d/lamborghin/lamborghini_aventador.png',
+  'Huracan':     '/assets/assetdcar2d/lamborghin/lamborghini_huracan.png',
+  'Countach':    '/assets/assetdcar2d/lamborghin/Lamborghini_Countach.png',
+  'Diablo':      '/assets/assetdcar2d/lamborghin/lamborghini_diablo.png',
+  'Murciélago':  '/assets/assetdcar2d/lamborghin/Murcelago.png',
+  'Gallardo':    '/assets/assetdcar2d/lamborghin/galardo.png',
+  // Ferrari
+  'F80':         '/assets/assetdcar2d/ferrari/f80.png',
+  '12Cilindri':  '/assets/assetdcar2d/ferrari/12Cilindri.png',
+  '296 GTB':     '/assets/assetdcar2d/ferrari/296 GTB.png',
+  'SF90':        '/assets/assetdcar2d/ferrari/SF90 Stradale.png',
+  '812':         '/assets/assetdcar2d/ferrari/812superfast.png',
+  'Enzo':        '/assets/assetdcar2d/ferrari/enzo.png',
+  'LaFerrari':   '/assets/assetdcar2d/ferrari/Laferrari.png',
+  'F40':         '/assets/assetdcar2d/ferrari/f80.png',
+  // Ford
+  'Mach-E':      '/assets/assetdcar2d/ford/mach-e.png',
+  'Mustang':     '/assets/assetdcar2d/ford/ford_mustang.png',
+  'Shelby':      '/assets/assetdcar2d/ford/shelby.png',
+  'Ford GT':     '/assets/assetdcar2d/ford/ford_gt.png',
+  'Everest':     '/assets/assetdcar2d/ford/everest.png',
+  'Ranger':      '/assets/assetdcar2d/ford/ranger.png',
+  'Focus':       '/assets/assetdcar2d/ford/focus.png',
+  'Fiesta':      '/assets/assetdcar2d/ford/fiesta.png',
+  'Capri':       '/assets/assetdcar2d/ford/capri.png',
+  // Chevrolet
+  'Corvette':    '/assets/assetdcar2d/chevrolet/corvette.png',
+  'Camaro':      '/assets/assetdcar2d/chevrolet/camaro.png',
+  'Silverado':   '/assets/assetdcar2d/chevrolet/silverado.png',
+  'Colorado':    '/assets/assetdcar2d/chevrolet/colorado.png',
+  'Cruze':       '/assets/assetdcar2d/chevrolet/cruza.png',
+  'Impala':      '/assets/assetdcar2d/chevrolet/impala.png',
+  'Chevelle':    '/assets/assetdcar2d/chevrolet/chevelle.png',
 };
 
-function pickCarImage(brand: number): string {
-  const pool = CAR_IMAGES[brand] ?? CAR_IMAGES[Brand.LAMBORGHINI];
-  return pool[Math.floor(Math.random() * pool.length)];
+// Car 3D models mapped by model name keyword
+const CAR_MODEL_BY_NAME: Record<string, string> = {
+  // Lamborghini
+  'Revuelto':    '/asset3d/cars_assets3d/lamborghini/lamborghini_revuelto.glb',
+  'Temerario':   '/asset3d/cars_assets3d/lamborghini/lamborghini_temerario.glb',
+  'Aventador':   '/asset3d/cars_assets3d/lamborghini/lamborghini_aventador.glb',
+  'Huracan':     '/asset3d/cars_assets3d/lamborghini/lamborghini_huracan.glb',
+  'Countach':    '/asset3d/cars_assets3d/lamborghini/lamborghini_countach.glb',
+  'Diablo':      '/asset3d/cars_assets3d/lamborghini/lamborghini_diablo_sv.glb',
+  'Murciélago':  '/asset3d/cars_assets3d/lamborghini/lamborghini_murcielago.glb',
+  'Gallardo':    '/asset3d/cars_assets3d/lamborghini/free_lamborghini_gallardo.glb',
+  // Ferrari
+  'F80':         '/asset3d/cars_assets3d/ferrari/2020_ferrari_sf90_stradale.glb',
+  '12Cilindri':  '/asset3d/cars_assets3d/ferrari/2025_ferrari_12cilindri.glb',
+  '296 GTB':     '/asset3d/cars_assets3d/ferrari/2022_ferrari_296_gtb.glb',
+  'SF90':        '/asset3d/cars_assets3d/ferrari/2020_ferrari_sf90_stradale.glb',
+  '812':         '/asset3d/cars_assets3d/ferrari/2018_ferrari_812_superfast.glb',
+  'F40':         '/asset3d/cars_assets3d/ferrari/ferrari_f40.glb',
+  'Enzo':        '/asset3d/cars_assets3d/ferrari/2002_ferrari_enzo_ferrari_out_run.glb',
+  'LaFerrari':   '/asset3d/cars_assets3d/ferrari/2014_ferrari_laferrari.glb',
+  // Ford
+  'Mach-E':      '/asset3d/cars_assets3d/ford/2020_ford_mustang_mach-e_1400_concept.glb',
+  'Mustang':     '/asset3d/cars_assets3d/ford/ford_mustang_shelby_2012.glb',
+  'Shelby':      '/asset3d/cars_assets3d/ford/2020_ford_shelby_gt500.glb',
+  'Ford GT':     '/asset3d/cars_assets3d/ford/2019_ford_gt_heritage_edition.glb',
+  'Everest':     '/asset3d/cars_assets3d/ford/ford_everest_sport_2023.glb',
+  'Ranger':      '/asset3d/cars_assets3d/ford/2014_ford_ranger_dakar.glb',
+  'Focus':       '/asset3d/cars_assets3d/ford/2009_ford_focus_rs.glb',
+  'Fiesta':      '/asset3d/cars_assets3d/ford/2013_ford_fiesta_st_grc.glb',
+  'Capri':       '/asset3d/cars_assets3d/ford/ford_capri_group_b.glb',
+  // Chevrolet
+  'Corvette':    '/asset3d/cars_assets3d/chevrolet/2019_chevrolet_corvette_zr1.glb',
+  'Camaro':      '/asset3d/cars_assets3d/chevrolet/2012_chevrolet_camaro_zl1.glb',
+  'Silverado':   '/asset3d/cars_assets3d/chevrolet/2024_chevrolet_silverado_ev_rst.glb',
+  'Colorado':    '/asset3d/cars_assets3d/chevrolet/2017_chevrolet_colorado_zr2.glb',
+  'Cruze':       '/asset3d/cars_assets3d/chevrolet/2017_chevrolet_cruze_ltz.glb',
+  'Impala':      '/asset3d/cars_assets3d/chevrolet/chevrolet_impala_1967-_supernatural.glb',
+  'Chevelle':    '/asset3d/cars_assets3d/chevrolet/1970_chevrolet_chevelle_ss_454.glb',
+};
+
+const CAR_MODEL_FALLBACK: Record<number, string> = {
+  [Brand.LAMBORGHINI]: '/asset3d/cars_assets3d/lamborghini/lamborghini_huracan.glb',
+  [Brand.FERRARI]:     '/asset3d/cars_assets3d/ferrari/2020_ferrari_sf90_stradale.glb',
+  [Brand.FORD]:        '/asset3d/cars_assets3d/ford/ford_mustang_shelby_2012.glb',
+  [Brand.CHEVROLET]:   '/asset3d/cars_assets3d/chevrolet/2019_chevrolet_corvette_zr1.glb',
+};
+
+function pickCarModel(brand: number, name?: string): string {
+  if (name) {
+    for (const [key, path] of Object.entries(CAR_MODEL_BY_NAME)) {
+      if (name.includes(key)) return path;
+    }
+  }
+  return CAR_MODEL_FALLBACK[brand] ?? CAR_MODEL_FALLBACK[Brand.LAMBORGHINI];
+}
+
+// Fallback images per brand
+const CAR_FALLBACK: Record<number, string> = {
+  [Brand.LAMBORGHINI]: '/assets/assetdcar2d/lamborghin/lamborghini_huracan.png',
+  [Brand.FERRARI]:     '/assets/assetdcar2d/ferrari/f80.png',
+  [Brand.FORD]:        '/assets/assetdcar2d/ford/ford_mustang.png',
+  [Brand.CHEVROLET]:   '/assets/assetdcar2d/chevrolet/corvette.png',
+};
+
+// partType: 0=Wheels, 1=Engine, 2=Body, 3=Shocks
+const PART_IMAGES: Record<number, string> = {
+  0: '/assets/Fragments/Wheels.png',
+  1: '/assets/Fragments/Engine.png',
+  2: '/assets/Fragments/Body.png',
+  3: '/assets/Fragments/Chasis.png',
+};
+
+function pickPartImage(partType: number): string {
+  return PART_IMAGES[partType] ?? '/assets/Fragments/Body.png';
+}
+
+function pickCarImage(brand: number, name?: string): string {
+  if (name) {
+    for (const [key, path] of Object.entries(CAR_IMAGE_BY_MODEL)) {
+      if (name.includes(key)) return path;
+    }
+  }
+  return CAR_FALLBACK[brand] ?? CAR_FALLBACK[Brand.LAMBORGHINI];
 }
 import logger from '../../config/logger';
 import {
@@ -211,7 +307,8 @@ export class GachaService {
           baseAcceleration: result.stats.acceleration,
           baseHandling: result.stats.handling,
           baseDrift: result.stats.drift,
-          imageUrl: pickCarImage(result.brand),
+          imageUrl: pickCarImage(result.brand, result.name),
+          modelUrl: pickCarModel(result.brand, result.name),
         },
       });
     } else {
@@ -223,6 +320,7 @@ export class GachaService {
           partType: result.partType ?? 0,
           rarity: result.rarity,
           compatibleBrand: result.brand,
+          imageUrl: pickPartImage(result.partType ?? 0),
           bonusSpeed: result.stats.speed,
           bonusAcceleration: result.stats.acceleration,
           bonusHandling: result.stats.handling,
